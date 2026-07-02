@@ -13,6 +13,15 @@ FAIL_THRESHOLD = 3
 RING_ORDER = ("session", "weekly_scoped", "weekly_all")
 LABELS = {"session": "Session (5hr)", "weekly_all": "Weekly (7d)"}
 WINDOW_HOURS = {"session": 5, "weekly_scoped": 24 * 7, "weekly_all": 24 * 7}
+STATUS_ZH = {
+    "investigating": "調查中",
+    "identified": "已確認",
+    "monitoring": "監控中",
+    "resolved": "已解決",
+    "postmortem": "事後分析",
+}
+# 仍在處理中的事故才會觸發主圓圈徽章；已解決/事後分析只列在 tooltip
+ACTIVE_STATUSES = {"investigating", "identified", "monitoring"}
 
 
 def fetch_usage(session_key: str, org_id: str) -> dict:
@@ -55,6 +64,40 @@ def elapsed_percent(resets_at, window_hours: float):
     return max(0.0, min(100.0, pct))
 
 
+def fetch_incidents() -> list:
+    """今日（UTC）的 claude.com 服務事故清單，不需驗證。"""
+    url = "https://status.claude.com/api/v2/incidents.json"
+    r = requests.get(url, timeout=8)
+    r.raise_for_status()
+    today_utc = datetime.now(timezone.utc).date()
+    result = []
+    for inc in r.json().get("incidents", []):
+        try:
+            created = datetime.fromisoformat(inc["created_at"].replace("Z", "+00:00"))
+        except (KeyError, ValueError):
+            continue
+        if created.date() == today_utc:
+            result.append({
+                "name": inc["name"],
+                "status": inc.get("status", ""),
+                "impact": inc.get("impact", "none"),
+            })
+    return result
+
+
+def incident_badge_color(incidents: list):
+    """今日事故中仍在處理者的最嚴重顏色；沒有則回傳 None。"""
+    worst = None
+    for inc in incidents:
+        if inc["status"] not in ACTIVE_STATUSES:
+            continue
+        if inc["impact"] in ("critical", "major"):
+            return "#ff4444"
+        if inc["impact"] == "minor":
+            worst = "#f0a030"
+    return worst
+
+
 def parse_limits(data: dict) -> list:
     """把 API 回應整理成圓環用的清單（由內而外排序）。"""
     items = {}
@@ -82,6 +125,7 @@ class UsageMonitor(QObject):
 
     updated = Signal(list)
     failed = Signal(str)
+    incidentsUpdated = Signal(list)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -120,6 +164,12 @@ class UsageMonitor(QObject):
             else:
                 self._fail_count = 0
                 self.updated.emit(items)
+
+            try:
+                incidents = fetch_incidents()
+            except Exception:
+                return  # 抓取失敗保留上次已知狀態，不影響用量的重試邏輯
+            self.incidentsUpdated.emit(incidents)
 
         threading.Thread(target=work, daemon=True).start()
 

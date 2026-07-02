@@ -9,7 +9,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QMovie, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QToolTip, QWidget
 
-from helper.usage import format_reset_time
+from helper.usage import STATUS_ZH, format_reset_time, incident_badge_color
 
 BUBBLE_D = 96
 RING_W = 3
@@ -45,6 +45,7 @@ class Bubble(QWidget):
         self._usage_enabled = False
         self._usage_items = []
         self._usage_error = ""
+        self._incidents = []
 
     # ── GIF（FR-2a：檔案單張、資料夾輪播）────────────────────────────────
 
@@ -90,6 +91,7 @@ class Bubble(QWidget):
         if not enabled:
             self._usage_items = []
             self._usage_error = ""
+            self._incidents = []
         self._refresh_tooltip()
         self.update()
 
@@ -104,23 +106,36 @@ class Bubble(QWidget):
         self._refresh_tooltip()
         self.update()
 
+    def set_incidents(self, incidents: list) -> None:
+        self._incidents = incidents
+        self._refresh_tooltip()
+        self.update()
+
     def _refresh_tooltip(self) -> None:
         if not self._usage_enabled:
             self.setToolTip("")
-        elif self._usage_error:
-            self.setToolTip(f"Claude 用量取得失敗：{self._usage_error}")
+            return
+        if self._usage_error:
+            text = f"Claude 用量取得失敗：{self._usage_error}"
         elif self._usage_items:
-            # sort by Session / Weekly Scoped / Weekly All 
+            # sort by Session / Weekly Scoped / Weekly All
             # print(f'self._usage_items: {self._usage_items}')
             self._usage_items.sort(key=lambda it: ["Session (5hr)", "Weekly (7d)", "Fable (7d)"].index(it["label"]))
-            
+
             lines = [
                 f"{it['label']}\t  {it['percent']}%\t  {format_reset_time(it['resets_at'])}"
                 for it in self._usage_items
             ]
-            self.setToolTip("\n".join(lines))
+            text = "\n".join(lines)
         else:
-            self.setToolTip("Claude 用量讀取中…")
+            text = "Claude 用量讀取中…"
+        if self._incidents:
+            inc_lines = [
+                f"● {inc['name']}［{STATUS_ZH.get(inc['status'], inc['status'])}］"
+                for inc in self._incidents
+            ]
+            text += "\n\n今日事故通報：\n" + "\n".join(inc_lines)
+        self.setToolTip(text)
 
     # ── 繪製 ─────────────────────────────────────────────────────────────
 
@@ -148,6 +163,9 @@ class Bubble(QWidget):
 
         if self._usage_enabled:
             self._paint_rings(p, cx, cy, r)
+            badge_color = incident_badge_color(self._incidents)
+            if badge_color:
+                self._paint_incident_badge(p, cx, cy, r, badge_color)
 
     def _paint_default_face(self, p: QPainter, circle: QRectF) -> None:
         """未設定 GIF 時的預設外觀（FR-3）：純色圓 + 簡單笑臉。"""
@@ -188,6 +206,17 @@ class Bubble(QWidget):
                     QPointF(cx + inner * math.cos(ang), cy - inner * math.sin(ang)),
                     QPointF(cx + outer * math.cos(ang), cy - outer * math.sin(ang)),
                 )
+
+    def _paint_incident_badge(self, p: QPainter, cx: float, cy: float, r: float, color: str) -> None:
+        """今日有事故仍在處理時，於主圓圈右上角顯示小圓點徽章（類似狀態指示點）。"""
+        badge_r = 8
+        dist = r - 6
+        ang = math.radians(45)
+        x = cx + dist * math.cos(ang)
+        y = cy - dist * math.sin(ang)
+        p.setPen(QPen(QColor("#1c1c1c"), 2))
+        p.setBrush(QColor(color))
+        p.drawEllipse(QPointF(x, y), badge_r, badge_r)
 
     # ── 拖曳與點擊（FR-6、FR-7）──────────────────────────────────────────
 

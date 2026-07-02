@@ -51,6 +51,7 @@ class HelperApp:
         self.monitor = UsageMonitor()
         self.monitor.updated.connect(self.bubble.set_usage)
         self.monitor.failed.connect(self.bubble.set_usage_error)
+        self.monitor.incidentsUpdated.connect(self.bubble.set_incidents)
         self._apply_usage_cfg()
 
         self._build_tray()
