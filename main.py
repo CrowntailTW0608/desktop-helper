@@ -3,26 +3,16 @@
 import sys
 
 from PySide6.QtCore import QPoint, Qt
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from helper import config
 from helper.bubble import Bubble
+from helper.icon import app_icon
 from helper.satellite import SatelliteRing
 from helper.settings_ui import SettingsDialog
+from helper.trigger import Toast, ToolUseEffect, TriggerWatcher
 from helper.usage import UsageMonitor
-
-
-def _tray_icon() -> QIcon:
-    pm = QPixmap(32, 32)
-    pm.fill(Qt.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.Antialiasing)
-    p.setPen(Qt.NoPen)
-    p.setBrush(QColor("#4a6fa5"))
-    p.drawEllipse(2, 2, 28, 28)
-    p.end()
-    return QIcon(pm)
 
 
 class HelperApp:
@@ -53,6 +43,13 @@ class HelperApp:
         self.monitor.failed.connect(self.bubble.set_usage_error)
         self.monitor.incidentsUpdated.connect(self.bubble.set_incidents)
         self._apply_usage_cfg()
+
+        self.trigger_watcher = TriggerWatcher()
+        self.trigger_watcher.stopTriggered.connect(self._on_stop_trigger)
+        self.trigger_watcher.postToolUseTriggered.connect(self._on_tooluse_trigger)
+        self._toasts = []
+        self._tooluse_effect = None
+        self._apply_trigger_cfg()
 
         self._build_tray()
         self.bubble.show()
@@ -86,6 +83,7 @@ class HelperApp:
                 lambda: self.ring.set_links(self.cfg["links"])
             )
             self.settings.usageChanged.connect(self._apply_usage_cfg)
+            self.settings.triggerChanged.connect(self._apply_trigger_cfg)
         self.settings.show()
         self.settings.raise_()
         self.settings.activateWindow()
@@ -99,10 +97,35 @@ class HelperApp:
         self.bubble.set_usage_enabled(enabled)
         self.monitor.configure(enabled, cu["session_key"], cu["org_id"])
 
+    def _apply_trigger_cfg(self):
+        tr = self.cfg["trigger"]
+        self.trigger_watcher.configure(tr["enabled"], tr["dir"])
+
+    # ── Trigger 反應（Stop 彈吐司 / PostToolUse 播放 GIF）───────────────────
+
+    def _on_stop_trigger(self, data: dict):
+        center = self.bubble.geometry().center()
+        land_pos = QPoint(
+            center.x() - Toast.WIDTH // 2, self.bubble.y() - Toast.HEIGHT + 50
+        )
+        project = data.get("project", "unknown")
+        toast = Toast(f"{project}\n已完成", land_pos)
+        toast.destroyed.connect(lambda: self._toasts.remove(toast) if toast in self._toasts else None)
+        self._toasts.append(toast)
+        self.bubble.raise_()
+
+    def _on_tooluse_trigger(self, _data: dict):
+        if self._tooluse_effect is None:
+            self._tooluse_effect = ToolUseEffect()
+        rect = self.bubble.geometry()
+        bottom_left = QPoint(rect.left(), rect.bottom())
+        self._tooluse_effect.play(bottom_left)
+        self.bubble.raise_()
+
     # ── 系統匣（FR-21～23）───────────────────────────────────────────────
 
     def _build_tray(self):
-        self.tray = QSystemTrayIcon(_tray_icon())
+        self.tray = QSystemTrayIcon(app_icon())
         self.tray.setToolTip("Desktop Helper")
         menu = QMenu()
         toggle = QAction("顯示/隱藏小幫手", menu)

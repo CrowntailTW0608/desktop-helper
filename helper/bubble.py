@@ -18,6 +18,7 @@ WINDOW = 128  # 三環外緣約 126px（6.2 節）
 DRAG_THRESHOLD = 6
 
 SEV_COLOR = {"normal": "#44cc66", "warning": "#f0a030", "critical": "#ff4444"}
+SEV_COLOR = {"normal": "#74c991", "warning": "#d9a84e", "critical": "#d97757"}
 BASE_RING = "#3a3a3a"
 ERROR_RING = "#777777"
 DEFAULT_BG = "#4a6fa5"
