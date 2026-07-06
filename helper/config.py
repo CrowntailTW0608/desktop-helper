@@ -15,6 +15,7 @@ DEFAULTS = {
     "auto_start": False,
     "links": [],
     "claude_usage": {"enabled": False, "session_key": "", "org_id": ""},
+    "trigger": {"enabled": False, "dir": ""},
 }
 
 
@@ -30,6 +31,8 @@ def load() -> dict:
         for key, value in data.items():
             if key == "claude_usage" and isinstance(value, dict):
                 cfg["claude_usage"].update(value)
+            elif key == "trigger" and isinstance(value, dict):
+                cfg["trigger"].update(value)
             elif key in cfg:
                 cfg[key] = value
     return cfg

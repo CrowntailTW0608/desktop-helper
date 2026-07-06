@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from helper import autostart, config
 from helper.icon import app_icon
+from helper.trigger import DEFAULT_TRIGGER_DIR
 
 
 class LinkDialog(QDialog):
@@ -96,6 +97,7 @@ class SettingsDialog(QDialog):
     gifChanged = Signal()
     linksChanged = Signal()
     usageChanged = Signal()
+    triggerChanged = Signal()
 
     def __init__(self, cfg: dict, parent=None):
         super().__init__(parent)
@@ -107,6 +109,7 @@ class SettingsDialog(QDialog):
         root.addWidget(self._build_appearance())
         root.addWidget(self._build_links())
         root.addWidget(self._build_usage())
+        root.addWidget(self._build_trigger())
         root.addWidget(self._build_general())
 
     # ── 1. 外觀 ──────────────────────────────────────────────────────────
@@ -263,7 +266,52 @@ class SettingsDialog(QDialog):
         config.save(self.cfg)
         self.usageChanged.emit()
 
-    # ── 4. 一般 ──────────────────────────────────────────────────────────
+    # ── 4. Trigger 監控 ──────────────────────────────────────────────────
+
+    def _build_trigger(self) -> QGroupBox:
+        box = QGroupBox("Trigger 監控")
+        tr = self.cfg["trigger"]
+        layout = QVBoxLayout(box)
+
+        self.trigger_enable = QCheckBox(
+            "啟用監控（每 2 秒讀取一次，Stop 彈吐司、PostToolUse 伸腳）"
+        )
+        self.trigger_enable.setChecked(tr["enabled"])
+        self.trigger_enable.toggled.connect(self._trigger_updated)
+        layout.addWidget(self.trigger_enable)
+
+        self.trigger_dir_label = QLabel(tr["dir"] or DEFAULT_TRIGGER_DIR)
+        self.trigger_dir_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        layout.addWidget(self.trigger_dir_label)
+
+        row = QHBoxLayout()
+        pick = QPushButton("選擇資料夾…")
+        pick.clicked.connect(self._pick_trigger_dir)
+        reset = QPushButton("還原預設")
+        reset.clicked.connect(lambda: self._set_trigger_dir(""))
+        row.addWidget(pick)
+        row.addWidget(reset)
+        row.addStretch()
+        layout.addLayout(row)
+        return box
+
+    def _pick_trigger_dir(self):
+        path = QFileDialog.getExistingDirectory(self, "選擇 Trigger 資料夾")
+        if path:
+            self._set_trigger_dir(path)
+
+    def _set_trigger_dir(self, path: str):
+        self.cfg["trigger"]["dir"] = path
+        self.trigger_dir_label.setText(path or DEFAULT_TRIGGER_DIR)
+        config.save(self.cfg)
+        self.triggerChanged.emit()
+
+    def _trigger_updated(self, checked: bool):
+        self.cfg["trigger"]["enabled"] = checked
+        config.save(self.cfg)
+        self.triggerChanged.emit()
+
+    # ── 5. 一般 ──────────────────────────────────────────────────────────
 
     def _build_general(self) -> QGroupBox:
         box = QGroupBox("一般")
