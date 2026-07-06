@@ -103,12 +103,13 @@ class HelperApp:
 
     # ── Trigger 反應（Stop 彈吐司 / PostToolUse 伸腳）──────────────────────
 
-    def _on_stop_trigger(self, _data: dict):
+    def _on_stop_trigger(self, data: dict):
         center = self.bubble.geometry().center()
         land_pos = QPoint(
             center.x() - Toast.WIDTH // 2, self.bubble.y() - Toast.HEIGHT - 10
         )
-        toast = Toast("Claude Code已完成", land_pos)
+        project = data.get("project", "unknown")
+        toast = Toast(f"{project}\n已完成", land_pos)
         toast.destroyed.connect(lambda: self._toasts.remove(toast) if toast in self._toasts else None)
         self._toasts.append(toast)
 
