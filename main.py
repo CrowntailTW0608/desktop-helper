@@ -106,17 +106,21 @@ class HelperApp:
     def _on_stop_trigger(self, data: dict):
         center = self.bubble.geometry().center()
         land_pos = QPoint(
-            center.x() - Toast.WIDTH // 2, self.bubble.y() - Toast.HEIGHT - 15
+            center.x() - Toast.WIDTH // 2, self.bubble.y() - Toast.HEIGHT + 50
         )
         project = data.get("project", "unknown")
         toast = Toast(f"{project}\n已完成", land_pos)
         toast.destroyed.connect(lambda: self._toasts.remove(toast) if toast in self._toasts else None)
         self._toasts.append(toast)
+        self.bubble.raise_()
 
     def _on_tooluse_trigger(self, _data: dict):
         if self._tooluse_effect is None:
             self._tooluse_effect = ToolUseEffect()
-        self._tooluse_effect.play()
+        rect = self.bubble.geometry()
+        bottom_left = QPoint(rect.left(), rect.bottom())
+        self._tooluse_effect.play(bottom_left)
+        self.bubble.raise_()
 
     # ── 系統匣（FR-21～23）───────────────────────────────────────────────
 

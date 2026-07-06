@@ -15,7 +15,7 @@ from PySide6.QtCore import (
     Signal,
 )
 from PySide6.QtGui import QColor, QMovie, QPainter, QPixmap
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QWidget
 
 DEFAULT_TRIGGER_DIR = os.path.join(os.path.expanduser("~"), ".claude-triggers")
 POLL_MS = 2000
@@ -78,7 +78,7 @@ class Toast(QWidget):
     WIDTH, HEIGHT = 140, 130
 
     def __init__(self, text: str, land_pos: QPoint):
-        super().__init__(None, Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint)
+        super().__init__(None, Qt.FramelessWindowHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(self.WIDTH, self.HEIGHT)
         self._text = text
@@ -111,7 +111,7 @@ class Toast(QWidget):
             )
 
         # 文字疊在吐司內部下半部，加白色描邊確保在焦黃底色上仍清楚可讀
-        text_rect = QRectF(10, self.HEIGHT * 0.45, self.WIDTH - 20, self.HEIGHT * 0.45)
+        text_rect = QRectF(10, self.HEIGHT * 0.15, self.WIDTH - 20, self.HEIGHT * 0.45)
         font = p.font()
         font.setBold(True)
         font.setPointSize(9)
@@ -129,18 +129,15 @@ class Toast(QWidget):
 
 
 class ToolUseEffect(QWidget):
-    """PostToolUse 事件反應：畫面左下角播放 GIF 動畫，2 秒後自動隱藏。"""
+    """PostToolUse 事件反應：主圓圈左下角播放 GIF 動畫，2 秒後自動隱藏。"""
 
     WIDTH, HEIGHT = 120, 120
-    MARGIN = 20
+    OFFSET_X, OFFSET_Y = -100, -150  # 相對主圓圈左下角的位移：負值往左／往上
 
     def __init__(self):
         super().__init__(
             None,
-            Qt.FramelessWindowHint
-            | Qt.Tool
-            | Qt.WindowStaysOnTopHint
-            | Qt.WindowDoesNotAcceptFocus,
+            Qt.FramelessWindowHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus,
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(self.WIDTH, self.HEIGHT)
@@ -151,12 +148,6 @@ class ToolUseEffect(QWidget):
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
         self._hide_timer.timeout.connect(self._on_timeout)
-
-        screen = QApplication.primaryScreen().availableGeometry()
-        self.move(
-            screen.left() + self.MARGIN,
-            screen.bottom() - self.HEIGHT - self.MARGIN,
-        )
 
     def paintEvent(self, _event) -> None:
         p = QPainter(self)
@@ -172,7 +163,11 @@ class ToolUseEffect(QWidget):
                 scaled,
             )
 
-    def play(self) -> None:
+    def play(self, bubble_bottom_left: QPoint) -> None:
+        self.move(
+            bubble_bottom_left.x() + self.OFFSET_X,
+            bubble_bottom_left.y() + self.OFFSET_Y,
+        )
         self._hide_timer.stop()
         self._movie.stop()
         self._movie.start()
