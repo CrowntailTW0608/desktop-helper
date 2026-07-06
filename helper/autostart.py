@@ -9,6 +9,8 @@ APP_NAME = "DesktopHelper"
 
 
 def _command() -> str:
+    if getattr(sys, "frozen", False):  # PyInstaller 打包後直接啟動 exe
+        return f'"{sys.executable}"'
     exe = sys.executable
     pythonw = os.path.join(os.path.dirname(exe), "pythonw.exe")
     if os.path.exists(pythonw):
