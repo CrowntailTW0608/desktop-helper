@@ -3,26 +3,15 @@
 import sys
 
 from PySide6.QtCore import QPoint, Qt
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from helper import config
 from helper.bubble import Bubble
+from helper.icon import app_icon
 from helper.satellite import SatelliteRing
 from helper.settings_ui import SettingsDialog
 from helper.usage import UsageMonitor
-
-
-def _tray_icon() -> QIcon:
-    pm = QPixmap(32, 32)
-    pm.fill(Qt.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.Antialiasing)
-    p.setPen(Qt.NoPen)
-    p.setBrush(QColor("#4a6fa5"))
-    p.drawEllipse(2, 2, 28, 28)
-    p.end()
-    return QIcon(pm)
 
 
 class HelperApp:
@@ -102,7 +91,7 @@ class HelperApp:
     # ── 系統匣（FR-21～23）───────────────────────────────────────────────
 
     def _build_tray(self):
-        self.tray = QSystemTrayIcon(_tray_icon())
+        self.tray = QSystemTrayIcon(app_icon())
         self.tray.setToolTip("Desktop Helper")
         menu = QMenu()
         toggle = QAction("顯示/隱藏小幫手", menu)

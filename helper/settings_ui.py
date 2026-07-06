@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from helper import autostart, config
+from helper.icon import app_icon
 
 
 class LinkDialog(QDialog):
@@ -100,6 +101,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.cfg = cfg
         self.setWindowTitle("Desktop Helper 設定")
+        self.setWindowIcon(app_icon())
         self.setMinimumWidth(480)
         root = QVBoxLayout(self)
         root.addWidget(self._build_appearance())
