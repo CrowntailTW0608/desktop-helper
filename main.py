@@ -11,7 +11,7 @@ from helper.bubble import Bubble
 from helper.icon import app_icon
 from helper.satellite import SatelliteRing
 from helper.settings_ui import SettingsDialog
-from helper.trigger import Leg, Toast, TriggerWatcher
+from helper.trigger import Toast, ToolUseEffect, TriggerWatcher
 from helper.usage import UsageMonitor
 
 
@@ -48,7 +48,7 @@ class HelperApp:
         self.trigger_watcher.stopTriggered.connect(self._on_stop_trigger)
         self.trigger_watcher.postToolUseTriggered.connect(self._on_tooluse_trigger)
         self._toasts = []
-        self._leg = None
+        self._tooluse_effect = None
         self._apply_trigger_cfg()
 
         self._build_tray()
@@ -101,12 +101,12 @@ class HelperApp:
         tr = self.cfg["trigger"]
         self.trigger_watcher.configure(tr["enabled"], tr["dir"])
 
-    # ── Trigger 反應（Stop 彈吐司 / PostToolUse 伸腳）──────────────────────
+    # ── Trigger 反應（Stop 彈吐司 / PostToolUse 播放 GIF）───────────────────
 
     def _on_stop_trigger(self, data: dict):
         center = self.bubble.geometry().center()
         land_pos = QPoint(
-            center.x() - Toast.WIDTH // 2, self.bubble.y() - Toast.HEIGHT - 10
+            center.x() - Toast.WIDTH // 2, self.bubble.y() - Toast.HEIGHT - 3
         )
         project = data.get("project", "unknown")
         toast = Toast(f"{project}\n已完成", land_pos)
@@ -114,11 +114,9 @@ class HelperApp:
         self._toasts.append(toast)
 
     def _on_tooluse_trigger(self, _data: dict):
-        if self._leg is None:
-            self._leg = Leg()
-        rect = self.bubble.geometry()
-        bottom_center = QPoint(rect.center().x(), rect.bottom())
-        self._leg.pop(bottom_center)
+        if self._tooluse_effect is None:
+            self._tooluse_effect = ToolUseEffect()
+        self._tooluse_effect.play()
 
     # ── 系統匣（FR-21～23）───────────────────────────────────────────────
 

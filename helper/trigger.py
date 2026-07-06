@@ -1,4 +1,4 @@
-"""Trigger 資料夾監控：每 2 秒讀取 trigger json，Stop 彈吐司、PostToolUse 伸腳"""
+"""Trigger 資料夾監控：每 2 秒讀取 trigger json，Stop 彈吐司、PostToolUse 播放 GIF"""
 
 import json
 import os
@@ -14,11 +14,13 @@ from PySide6.QtCore import (
     Qt,
     Signal,
 )
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QWidget
+from PySide6.QtGui import QColor, QMovie, QPainter, QPixmap
+from PySide6.QtWidgets import QApplication, QWidget
 
 DEFAULT_TRIGGER_DIR = os.path.join(os.path.expanduser("~"), ".claude-triggers")
 POLL_MS = 2000
+TOAST_IMAGE = os.path.join(os.path.dirname(__file__), "assest", "toast.png")
+TOOLUSE_GIF = os.path.join(os.path.dirname(__file__), "assest", "hammer-break (1).gif")
 
 
 class TriggerWatcher(QObject):
@@ -73,13 +75,14 @@ class TriggerWatcher(QObject):
 class Toast(QWidget):
     """Stop 事件通知：吐司從主圓圈位置彈出，OutBounce 呈現「彈出→落地」的彈跳感，點擊消失。"""
 
-    WIDTH, HEIGHT = 160, 90
+    WIDTH, HEIGHT = 140, 130
 
     def __init__(self, text: str, land_pos: QPoint):
         super().__init__(None, Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(self.WIDTH, self.HEIGHT)
         self._text = text
+        self._pixmap = QPixmap(TOAST_IMAGE)
 
         start_pos = QPoint(land_pos.x(), land_pos.y() + 60)
         self.move(start_pos)
@@ -95,37 +98,29 @@ class Toast(QWidget):
     def paintEvent(self, _event) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
 
-        body = QRectF(20, 30, self.WIDTH - 40, self.HEIGHT - 40)
-        path = QPainterPath()
-        path.moveTo(body.left(), body.bottom())
-        path.lineTo(body.left(), body.top() + 14)
-        path.quadTo(body.left(), body.top(), body.left() + 14, body.top())
-        path.lineTo(body.right() - 14, body.top())
-        path.quadTo(body.right(), body.top(), body.right(), body.top() + 14)
-        path.lineTo(body.right(), body.bottom())
-        path.closeSubpath()
-        p.setPen(QPen(QColor("#a8601c"), 2))
-        p.setBrush(QColor("#e8b463"))
-        p.drawPath(path)
+        if not self._pixmap.isNull():
+            scaled = self._pixmap.scaled(
+                self.WIDTH, self.HEIGHT, Qt.KeepAspectRatio, Qt.SmoothTransformation
+            )
+            p.drawPixmap(
+                (self.WIDTH - scaled.width()) // 2,
+                (self.HEIGHT - scaled.height()) // 2,
+                scaled,
+            )
 
-        inner = body.adjusted(8, 8, -8, -4)
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor("#f3d9a4"))
-        p.drawRoundedRect(inner, 6, 6)
-
-        p.setPen(QPen(QColor(255, 255, 255, 200), 2))
-        p.setBrush(Qt.NoBrush)
-        for dx in (-10, 10):
-            x = body.center().x() + dx
-            p.drawLine(int(x), int(body.top() - 6), int(x - 3), int(body.top() - 16))
-
-        p.setPen(QColor("#3a2410"))
+        # 文字疊在吐司內部下半部，加白色描邊確保在焦黃底色上仍清楚可讀
+        text_rect = QRectF(10, self.HEIGHT * 0.45, self.WIDTH - 20, self.HEIGHT * 0.45)
         font = p.font()
         font.setBold(True)
         font.setPointSize(9)
         p.setFont(font)
-        p.drawText(inner, Qt.AlignCenter | Qt.TextWordWrap, self._text)
+        p.setPen(QColor("#ffffff"))
+        for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            p.drawText(text_rect.translated(dx, dy), Qt.AlignCenter | Qt.TextWordWrap, self._text)
+        p.setPen(QColor("#3a2410"))
+        p.drawText(text_rect, Qt.AlignCenter | Qt.TextWordWrap, self._text)
 
     def mouseReleaseEvent(self, e) -> None:
         if e.button() == Qt.LeftButton:
@@ -133,11 +128,11 @@ class Toast(QWidget):
             self.close()
 
 
-class Leg(QWidget):
-    """PostToolUse 事件反應：獨立小視窗腳從主圓圈底部伸出，2 秒後自動縮回。"""
+class ToolUseEffect(QWidget):
+    """PostToolUse 事件反應：畫面左下角播放 GIF 動畫，2 秒後自動隱藏。"""
 
-    LEG_W, LEG_H = 14, 28
-    ANIM_MS = 150
+    WIDTH, HEIGHT = 120, 120
+    MARGIN = 20
 
     def __init__(self):
         super().__init__(
@@ -148,47 +143,42 @@ class Leg(QWidget):
             | Qt.WindowDoesNotAcceptFocus,
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setFixedSize(self.LEG_W, self.LEG_H)
-        self._anim = None
-        self._hidden_pos = QPoint(0, 0)
-        self._retract_timer = QTimer(self)
-        self._retract_timer.setSingleShot(True)
-        self._retract_timer.timeout.connect(self._retract)
+        self.setFixedSize(self.WIDTH, self.HEIGHT)
+
+        self._movie = QMovie(TOOLUSE_GIF)
+        self._movie.frameChanged.connect(lambda _: self.update())
+
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.timeout.connect(self._on_timeout)
+
+        screen = QApplication.primaryScreen().availableGeometry()
+        self.move(
+            screen.left() + self.MARGIN,
+            screen.bottom() - self.HEIGHT - self.MARGIN,
+        )
 
     def paintEvent(self, _event) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor("#4a6fa5"))
-        p.drawRoundedRect(QRectF(2, 0, self.LEG_W - 4, self.LEG_H - 6), 4, 4)
-        p.setBrush(QColor("#3a3a3a"))
-        p.drawEllipse(QRectF(0, self.LEG_H - 10, self.LEG_W, 10))
+        pm = self._movie.currentPixmap()
+        if not pm.isNull():
+            scaled = pm.scaled(
+                self.WIDTH, self.HEIGHT, Qt.KeepAspectRatio, Qt.SmoothTransformation
+            )
+            p.drawPixmap(
+                (self.WIDTH - scaled.width()) // 2,
+                (self.HEIGHT - scaled.height()) // 2,
+                scaled,
+            )
 
-    def pop(self, bubble_bottom_center: QPoint) -> None:
-        self._hidden_pos = bubble_bottom_center - QPoint(self.LEG_W // 2, self.LEG_H)
-        shown_pos = bubble_bottom_center - QPoint(self.LEG_W // 2, self.LEG_H - 18)
-
-        self._retract_timer.stop()
-        if self._anim:
-            self._anim.stop()
-
-        self.move(self._hidden_pos)
+    def play(self) -> None:
+        self._hide_timer.stop()
+        self._movie.stop()
+        self._movie.start()
         self.show()
-        self._anim = QPropertyAnimation(self, b"pos", self)
-        self._anim.setDuration(self.ANIM_MS)
-        self._anim.setStartValue(self._hidden_pos)
-        self._anim.setEndValue(shown_pos)
-        self._anim.setEasingCurve(QEasingCurve.OutCubic)
-        self._anim.start()
-        self._retract_timer.start(2000)
+        self._hide_timer.start(2000)
 
-    def _retract(self) -> None:
-        if self._anim:
-            self._anim.stop()
-        self._anim = QPropertyAnimation(self, b"pos", self)
-        self._anim.setDuration(self.ANIM_MS)
-        self._anim.setStartValue(self.pos())
-        self._anim.setEndValue(self._hidden_pos)
-        self._anim.setEasingCurve(QEasingCurve.InCubic)
-        self._anim.finished.connect(self.hide)
-        self._anim.start()
+    def _on_timeout(self) -> None:
+        self._movie.stop()
+        self.hide()
