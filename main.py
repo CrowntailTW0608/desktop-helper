@@ -106,7 +106,7 @@ class HelperApp:
     def _on_stop_trigger(self, data: dict):
         center = self.bubble.geometry().center()
         land_pos = QPoint(
-            center.x() - Toast.WIDTH // 2, self.bubble.y() - Toast.HEIGHT - 3
+            center.x() - Toast.WIDTH // 2, self.bubble.y() - Toast.HEIGHT - 15
         )
         project = data.get("project", "unknown")
         toast = Toast(f"{project}\n已完成", land_pos)
