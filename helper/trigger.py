@@ -21,6 +21,7 @@ DEFAULT_TRIGGER_DIR = os.path.join(os.path.expanduser("~"), ".claude-triggers")
 POLL_MS = 2000
 TOAST_IMAGE = os.path.join(os.path.dirname(__file__), "assest", "toast.png")
 TOOLUSE_GIF = os.path.join(os.path.dirname(__file__), "assest", "hammer-break (1).gif")
+NOTIFICATION_GIF = os.path.join(os.path.dirname(__file__), "assest", "nut.gif")
 
 
 class TriggerWatcher(QObject):
@@ -28,6 +29,7 @@ class TriggerWatcher(QObject):
 
     stopTriggered = Signal(dict)
     postToolUseTriggered = Signal(dict)
+    notificationTriggered = Signal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -66,6 +68,8 @@ class TriggerWatcher(QObject):
             self.stopTriggered.emit(data)
         elif event == "PostToolUse":
             self.postToolUseTriggered.emit(data)
+        elif event == "Notification":
+            self.notificationTriggered.emit(data)
 
         processed_dir = os.path.join(self._dir, "processed")
         os.makedirs(processed_dir, exist_ok=True)
@@ -78,7 +82,7 @@ class Toast(QWidget):
     WIDTH, HEIGHT = 140, 130
 
     def __init__(self, text: str, land_pos: QPoint):
-        super().__init__(None, Qt.FramelessWindowHint | Qt.Tool)
+        super().__init__(None, Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(self.WIDTH, self.HEIGHT)
         self._text = text
@@ -137,7 +141,10 @@ class ToolUseEffect(QWidget):
     def __init__(self):
         super().__init__(
             None,
-            Qt.FramelessWindowHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus,
+            Qt.FramelessWindowHint
+            | Qt.Tool
+            | Qt.WindowStaysOnTopHint
+            | Qt.WindowDoesNotAcceptFocus,
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(self.WIDTH, self.HEIGHT)
@@ -177,3 +184,42 @@ class ToolUseEffect(QWidget):
     def _on_timeout(self) -> None:
         self._movie.stop()
         self.hide()
+
+
+class NotificationEffect(QWidget):
+    """Notification 事件反應：GIF 右下角對齊主圓圈中心，點擊後消失。"""
+
+    WIDTH, HEIGHT = 120, 120
+
+    def __init__(self):
+        super().__init__(None, Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setFixedSize(self.WIDTH, self.HEIGHT)
+
+        self._movie = QMovie(NOTIFICATION_GIF)
+        self._movie.frameChanged.connect(lambda _: self.update())
+
+    def paintEvent(self, _event) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        pm = self._movie.currentPixmap()
+        if not pm.isNull():
+            scaled = pm.scaled(
+                self.WIDTH, self.HEIGHT, Qt.KeepAspectRatio, Qt.SmoothTransformation
+            )
+            p.drawPixmap(
+                (self.WIDTH - scaled.width()) // 2,
+                (self.HEIGHT - scaled.height()) // 2,
+                scaled,
+            )
+
+    def play(self, bubble_center: QPoint) -> None:
+        self.move(bubble_center.x() - self.WIDTH, bubble_center.y() - self.HEIGHT)
+        self._movie.stop()
+        self._movie.start()
+        self.show()
+
+    def mouseReleaseEvent(self, e) -> None:
+        if e.button() == Qt.LeftButton:
+            self._movie.stop()
+            self.hide()

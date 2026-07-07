@@ -274,7 +274,7 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(box)
 
         self.trigger_enable = QCheckBox(
-            "啟用監控（每 2 秒讀取一次，Stop 彈吐司、PostToolUse 伸腳）"
+            "啟用監控（每 2 秒讀取一次，Stop、PostToolUse、Notification）"
         )
         self.trigger_enable.setChecked(tr["enabled"])
         self.trigger_enable.toggled.connect(self._trigger_updated)

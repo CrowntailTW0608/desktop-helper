@@ -11,7 +11,7 @@ from helper.bubble import Bubble
 from helper.icon import app_icon
 from helper.satellite import SatelliteRing
 from helper.settings_ui import SettingsDialog
-from helper.trigger import Toast, ToolUseEffect, TriggerWatcher
+from helper.trigger import NotificationEffect, Toast, ToolUseEffect, TriggerWatcher
 from helper.usage import UsageMonitor
 
 
@@ -47,8 +47,10 @@ class HelperApp:
         self.trigger_watcher = TriggerWatcher()
         self.trigger_watcher.stopTriggered.connect(self._on_stop_trigger)
         self.trigger_watcher.postToolUseTriggered.connect(self._on_tooluse_trigger)
+        self.trigger_watcher.notificationTriggered.connect(self._on_notification_trigger)
         self._toasts = []
         self._tooluse_effect = None
+        self._notification_effect = None
         self._apply_trigger_cfg()
 
         self._build_tray()
@@ -120,6 +122,12 @@ class HelperApp:
         rect = self.bubble.geometry()
         bottom_left = QPoint(rect.left(), rect.bottom())
         self._tooluse_effect.play(bottom_left)
+        self.bubble.raise_()
+
+    def _on_notification_trigger(self, _data: dict):
+        if self._notification_effect is None:
+            self._notification_effect = NotificationEffect()
+        self._notification_effect.play(self.bubble.geometry().center())
         self.bubble.raise_()
 
     # ── 系統匣（FR-21～23）───────────────────────────────────────────────
