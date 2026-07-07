@@ -22,14 +22,18 @@ POLL_MS = 2000
 TOAST_IMAGE = os.path.join(os.path.dirname(__file__), "assest", "toast.png")
 TOOLUSE_GIF = os.path.join(os.path.dirname(__file__), "assest", "hammer-break (1).gif")
 NOTIFICATION_GIF = os.path.join(os.path.dirname(__file__), "assest", "nut.gif")
+THINKING_GIF = os.path.join(os.path.dirname(__file__), "assest", "emm-thinking.gif")
+SMOKE_GIF = os.path.join(os.path.dirname(__file__), "assest", "smoke.gif")
 
 
 class TriggerWatcher(QObject):
     """輪詢 trigger 資料夾（每 2 秒），依 event 欄位分派訊號；處理過的檔案搬到 processed/。"""
 
     stopTriggered = Signal(dict)
+    preToolUseTriggered = Signal(dict)
     postToolUseTriggered = Signal(dict)
     notificationTriggered = Signal(dict)
+    userPromptSubmitTriggered = Signal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -66,10 +70,14 @@ class TriggerWatcher(QObject):
         event = data.get("event")
         if event == "Stop":
             self.stopTriggered.emit(data)
+        elif event == "PreToolUse":
+            self.preToolUseTriggered.emit(data)
         elif event == "PostToolUse":
             self.postToolUseTriggered.emit(data)
         elif event == "Notification":
             self.notificationTriggered.emit(data)
+        elif event == "UserPromptSubmit":
+            self.userPromptSubmitTriggered.emit(data)
 
         processed_dir = os.path.join(self._dir, "processed")
         os.makedirs(processed_dir, exist_ok=True)
@@ -80,22 +88,35 @@ class Toast(QWidget):
     """Stop 事件通知：吐司從主圓圈位置彈出，OutBounce 呈現「彈出→落地」的彈跳感，點擊消失。"""
 
     WIDTH, HEIGHT = 140, 130
+    SMOKE_WIDTH, SMOKE_HEIGHT = 80, 60  # 疊在吐司正上方的冒煙區域
 
     def __init__(self, text: str, land_pos: QPoint):
-        super().__init__(None, Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint)
+        super().__init__(
+            None,
+            Qt.FramelessWindowHint
+            | Qt.Tool
+            | Qt.WindowStaysOnTopHint
+            | Qt.WindowDoesNotAcceptFocus,
+        )
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setFixedSize(self.WIDTH, self.HEIGHT)
+        # 視窗整體往上多留 SMOKE_HEIGHT 空間畫煙，吐司本體維持原尺寸與錨點
+        self.setFixedSize(self.WIDTH, self.HEIGHT + self.SMOKE_HEIGHT)
         self._text = text
         self._pixmap = QPixmap(TOAST_IMAGE)
 
-        start_pos = QPoint(land_pos.x(), land_pos.y() + 60)
+        self._smoke_movie = QMovie(SMOKE_GIF)
+        self._smoke_movie.frameChanged.connect(lambda _: self.update())
+        self._smoke_movie.start()
+
+        start_pos = QPoint(land_pos.x(), land_pos.y() + 60 - self.SMOKE_HEIGHT)
+        land_frame_pos = QPoint(land_pos.x(), land_pos.y() - self.SMOKE_HEIGHT)
         self.move(start_pos)
         self.show()
 
         self._anim = QPropertyAnimation(self, b"pos", self)
         self._anim.setDuration(650)
         self._anim.setStartValue(start_pos)
-        self._anim.setEndValue(land_pos)
+        self._anim.setEndValue(land_frame_pos)
         self._anim.setEasingCurve(QEasingCurve.OutBounce)
         self._anim.start()
 
@@ -104,18 +125,27 @@ class Toast(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         p.setRenderHint(QPainter.SmoothPixmapTransform)
 
+        smoke_pm = self._smoke_movie.currentPixmap()
+        if not smoke_pm.isNull():
+            scaled_smoke = smoke_pm.scaled(
+                self.SMOKE_WIDTH, self.SMOKE_HEIGHT, Qt.KeepAspectRatio, Qt.SmoothTransformation
+            )
+            p.drawPixmap((self.WIDTH - scaled_smoke.width()) // 2, 0, scaled_smoke)
+
         if not self._pixmap.isNull():
             scaled = self._pixmap.scaled(
                 self.WIDTH, self.HEIGHT, Qt.KeepAspectRatio, Qt.SmoothTransformation
             )
             p.drawPixmap(
                 (self.WIDTH - scaled.width()) // 2,
-                (self.HEIGHT - scaled.height()) // 2,
+                self.SMOKE_HEIGHT + (self.HEIGHT - scaled.height()) // 2,
                 scaled,
             )
 
         # 文字疊在吐司內部下半部，加白色描邊確保在焦黃底色上仍清楚可讀
-        text_rect = QRectF(10, self.HEIGHT * 0.15, self.WIDTH - 20, self.HEIGHT * 0.45)
+        text_rect = QRectF(
+            10, self.SMOKE_HEIGHT + self.HEIGHT * 0.15, self.WIDTH - 20, self.HEIGHT * 0.45
+        )
         font = p.font()
         font.setBold(True)
         font.setPointSize(9)
@@ -129,14 +159,25 @@ class Toast(QWidget):
     def mouseReleaseEvent(self, e) -> None:
         if e.button() == Qt.LeftButton:
             self._anim.stop()
+            self._smoke_movie.stop()
             self.close()
+
+    def shift(self, delta: QPoint) -> None:
+        """主圓圈被拖曳時同步跟隨；動畫進行中則平移動畫的起訖點，避免被下一幀蓋回原位。"""
+        if self._anim.state() == QPropertyAnimation.Running:
+            self._anim.setStartValue(self._anim.startValue() + delta)
+            self._anim.setEndValue(self._anim.endValue() + delta)
+        else:
+            self.move(self.pos() + delta)
 
 
 class ToolUseEffect(QWidget):
-    """PostToolUse 事件反應：主圓圈左下角播放 GIF 動畫，2 秒後自動隱藏。"""
+    """PreToolUse 開始播放、PostToolUse 停止：主圓圈左下角播放 GIF 動畫。
+    若 PostToolUse 遲遲未到（例如 hook 漏發），SAFETY_TIMEOUT_MS 後自動隱藏，避免卡住。"""
 
     WIDTH, HEIGHT = 120, 120
     OFFSET_X, OFFSET_Y = -100, -150  # 相對主圓圈左下角的位移：負值往左／往上
+    SAFETY_TIMEOUT_MS = 30_000
 
     def __init__(self):
         super().__init__(
@@ -170,20 +211,101 @@ class ToolUseEffect(QWidget):
                 scaled,
             )
 
-    def play(self, bubble_bottom_left: QPoint) -> None:
+    def open(self, bubble_bottom_left: QPoint) -> None:
         self.move(
             bubble_bottom_left.x() + self.OFFSET_X,
             bubble_bottom_left.y() + self.OFFSET_Y,
         )
-        self._hide_timer.stop()
         self._movie.stop()
         self._movie.start()
         self.show()
-        self._hide_timer.start(2000)
+        self._hide_timer.start(self.SAFETY_TIMEOUT_MS)
 
-    def _on_timeout(self) -> None:
+    def close_gif(self) -> None:
+        self._hide_timer.stop()
         self._movie.stop()
         self.hide()
+
+    def _on_timeout(self) -> None:
+        self.close_gif()
+
+
+class ThinkingEffect(QWidget):
+    """UserPromptSubmit 事件反應：主圓圈正上方播放 GIF，上下浮動循環，
+    固定秒數後自動隱藏（ponytail: 不追蹤後續事件，時間到就收，需要更精準時機再改）。"""
+
+    WIDTH, HEIGHT = 120, 120
+    OFFSET_Y = -100  # 相對主圓圈頂部置中的位移，與 Toast 落地位置相同高度
+    FLOAT_PX = 12
+    FLOAT_CYCLE_MS = 1500
+    VISIBLE_MS = 3500
+
+    def __init__(self):
+        super().__init__(
+            None,
+            Qt.FramelessWindowHint
+            | Qt.Tool
+            | Qt.WindowStaysOnTopHint
+            | Qt.WindowDoesNotAcceptFocus,
+        )
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setFixedSize(self.WIDTH, self.HEIGHT)
+
+        self._movie = QMovie(THINKING_GIF)
+        self._movie.frameChanged.connect(lambda _: self.update())
+
+        self._float_anim = QPropertyAnimation(self, b"pos", self)
+        self._float_anim.setDuration(self.FLOAT_CYCLE_MS)
+        self._float_anim.setEasingCurve(QEasingCurve.InOutSine)
+        self._float_anim.setLoopCount(-1)
+
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.timeout.connect(self.close_gif)
+
+    def paintEvent(self, _event) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        pm = self._movie.currentPixmap()
+        if not pm.isNull():
+            scaled = pm.scaled(
+                self.WIDTH, self.HEIGHT, Qt.KeepAspectRatio, Qt.SmoothTransformation
+            )
+            p.drawPixmap(
+                (self.WIDTH - scaled.width()) // 2-10,
+                (self.HEIGHT - scaled.height()) // 2,
+                scaled,
+            )
+
+    def open(self, bubble_top_center: QPoint) -> None:
+        top_pos = QPoint(bubble_top_center.x() - self.WIDTH // 2, bubble_top_center.y() + self.OFFSET_Y)
+        self.move(top_pos)
+        self._movie.stop()
+        self._movie.start()
+        self.show()
+
+        low_pos = QPoint(top_pos.x(), top_pos.y() + self.FLOAT_PX)
+        self._float_anim.stop()
+        self._float_anim.setStartValue(top_pos)
+        self._float_anim.setKeyValueAt(0.5, low_pos)
+        self._float_anim.setEndValue(top_pos)
+        self._float_anim.start()
+
+        self._hide_timer.start(self.VISIBLE_MS)
+
+    def close_gif(self) -> None:
+        self._hide_timer.stop()
+        self._float_anim.stop()
+        self._movie.stop()
+        self.hide()
+
+    def shift(self, delta: QPoint) -> None:
+        """主圓圈被拖曳時同步跟隨；浮動動畫進行中則平移每個關鍵影格。"""
+        if self._float_anim.state() == QPropertyAnimation.Running:
+            for step, value in self._float_anim.keyValues():
+                self._float_anim.setKeyValueAt(step, value + delta)
+        else:
+            self.move(self.pos() + delta)
 
 
 class NotificationEffect(QWidget):

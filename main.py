@@ -11,7 +11,13 @@ from helper.bubble import Bubble
 from helper.icon import app_icon
 from helper.satellite import SatelliteRing
 from helper.settings_ui import SettingsDialog
-from helper.trigger import NotificationEffect, Toast, ToolUseEffect, TriggerWatcher
+from helper.trigger import (
+    NotificationEffect,
+    ThinkingEffect,
+    Toast,
+    ToolUseEffect,
+    TriggerWatcher,
+)
 from helper.usage import UsageMonitor
 
 
@@ -32,9 +38,8 @@ class HelperApp:
             lambda: self.ring.toggle(self.bubble.geometry().center())
         )
         self.bubble.moved.connect(self._save_position)
-        self.bubble.dragMoved.connect(
-            lambda: self.ring.reposition(self.bubble.geometry().center())
-        )
+        self._last_bubble_pos = self.bubble.pos()
+        self.bubble.dragMoved.connect(self._on_bubble_dragged)
         # 點擊小幫手以外的區域（切到其他視窗）時收合衛星（FR-13）
         app.applicationStateChanged.connect(self._on_app_state)
 
@@ -46,11 +51,14 @@ class HelperApp:
 
         self.trigger_watcher = TriggerWatcher()
         self.trigger_watcher.stopTriggered.connect(self._on_stop_trigger)
-        self.trigger_watcher.postToolUseTriggered.connect(self._on_tooluse_trigger)
+        self.trigger_watcher.preToolUseTriggered.connect(self._on_pretooluse_trigger)
+        self.trigger_watcher.postToolUseTriggered.connect(self._on_posttooluse_trigger)
         self.trigger_watcher.notificationTriggered.connect(self._on_notification_trigger)
+        self.trigger_watcher.userPromptSubmitTriggered.connect(self._on_userpromptsubmit_trigger)
         self._toasts = []
         self._tooluse_effect = None
         self._notification_effect = None
+        self._thinking_effect = None
         self._apply_trigger_cfg()
 
         self._build_tray()
@@ -70,6 +78,21 @@ class HelperApp:
     def _save_position(self, x: int, y: int):
         self.cfg["position"] = {"x": x, "y": y}
         config.save(self.cfg)
+
+    def _on_bubble_dragged(self):
+        """主圓圈被拖曳時，衛星選單、吐司、GIF 疊圖都跟著相對移動。"""
+        new_pos = self.bubble.pos()
+        delta = new_pos - self._last_bubble_pos
+        self._last_bubble_pos = new_pos
+        self.ring.reposition(self.bubble.geometry().center())
+        for toast in self._toasts:
+            toast.shift(delta)
+        if self._tooluse_effect and self._tooluse_effect.isVisible():
+            self._tooluse_effect.move(self._tooluse_effect.pos() + delta)
+        if self._notification_effect and self._notification_effect.isVisible():
+            self._notification_effect.move(self._notification_effect.pos() + delta)
+        if self._thinking_effect and self._thinking_effect.isVisible():
+            self._thinking_effect.shift(delta)
 
     def _on_app_state(self, state):
         if state != Qt.ApplicationActive:
@@ -116,12 +139,24 @@ class HelperApp:
         self._toasts.append(toast)
         self.bubble.raise_()
 
-    def _on_tooluse_trigger(self, _data: dict):
+    def _on_pretooluse_trigger(self, _data: dict):
         if self._tooluse_effect is None:
             self._tooluse_effect = ToolUseEffect()
         rect = self.bubble.geometry()
         bottom_left = QPoint(rect.left(), rect.bottom())
-        self._tooluse_effect.play(bottom_left)
+        self._tooluse_effect.open(bottom_left)
+        self.bubble.raise_()
+
+    def _on_posttooluse_trigger(self, _data: dict):
+        if self._tooluse_effect is not None:
+            self._tooluse_effect.close_gif()
+
+    def _on_userpromptsubmit_trigger(self, _data: dict):
+        if self._thinking_effect is None:
+            self._thinking_effect = ThinkingEffect()
+        rect = self.bubble.geometry()
+        top_center = QPoint(rect.center().x(), rect.top())
+        self._thinking_effect.open(top_center)
         self.bubble.raise_()
 
     def _on_notification_trigger(self, _data: dict):
