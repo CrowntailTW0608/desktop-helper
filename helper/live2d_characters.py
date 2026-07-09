@@ -23,6 +23,7 @@ CHARACTERS = {
             "UserPromptSubmit": {"expression": "lks"},
             "PreToolUse": {"expression": "wh"},
             "PostToolUse": {"reset": True},
+            "PreCompact": {"expression": "han"},
             "Stop": {
                 "expression": "anya",
                 "motion": {"group": "", "index": 1, "priority": "FORCE", "hold": 2.317},
@@ -37,6 +38,7 @@ CHARACTERS = {
             "UserPromptSubmit" : {"motion": {"group": "", "index": 2}},
             "PreToolUse": {"motion": {"group": "", "index": 3}},
             "PostToolUse": {"idle": True},
+            "PreCompact": {"motion": {"group": "", "index": 4}, "expression": "exp_08"},
             "Stop": {"motion": {"group": "", "index": 5, "hold": 9.23}},
             "Clicked": {"motion": {"group": "", "index": 1}},
         },

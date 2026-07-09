@@ -34,6 +34,7 @@ class TriggerWatcher(QObject):
     postToolUseTriggered = Signal(dict)
     notificationTriggered = Signal(dict)
     userPromptSubmitTriggered = Signal(dict)
+    preCompactTriggered = Signal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -78,6 +79,8 @@ class TriggerWatcher(QObject):
             self.notificationTriggered.emit(data)
         elif event == "UserPromptSubmit":
             self.userPromptSubmitTriggered.emit(data)
+        elif event == "PreCompact":
+            self.preCompactTriggered.emit(data)
 
         processed_dir = os.path.join(self._dir, "processed")
         try:
@@ -410,5 +413,59 @@ class NotificationEffect(QWidget):
 
     def mouseReleaseEvent(self, e) -> None:
         if e.button() == Qt.LeftButton:
+            self._movie.stop()
+            self.hide()
+
+
+class PreCompactEffect(QWidget):
+    """PreCompact 事件反應：對話即將被壓縮的提醒，主圓圈右上角小圖示，
+    一閃即逝（VISIBLE_MS 後自動隱藏），點擊也可提前關閉。"""
+
+    WIDTH, HEIGHT = 48, 48
+    OFFSET_X, OFFSET_Y = -36, -12  # 相對主圓圈右上角的位移
+    VISIBLE_MS = 2500
+
+    def __init__(self):
+        super().__init__(
+            None,
+            Qt.FramelessWindowHint
+            | Qt.Tool
+            | Qt.WindowStaysOnTopHint
+            | Qt.WindowDoesNotAcceptFocus,
+        )
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setFixedSize(self.WIDTH, self.HEIGHT)
+
+        self._movie = QMovie(NOTIFICATION_GIF)
+        self._movie.frameChanged.connect(lambda _: self.update())
+
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.timeout.connect(self.hide)
+
+    def paintEvent(self, _event) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        pm = self._movie.currentPixmap()
+        if not pm.isNull():
+            scaled = pm.scaled(
+                self.WIDTH, self.HEIGHT, Qt.KeepAspectRatio, Qt.SmoothTransformation
+            )
+            p.drawPixmap(
+                (self.WIDTH - scaled.width()) // 2,
+                (self.HEIGHT - scaled.height()) // 2,
+                scaled,
+            )
+
+    def play(self, bubble_top_right: QPoint) -> None:
+        self.move(bubble_top_right.x() + self.OFFSET_X, bubble_top_right.y() + self.OFFSET_Y)
+        self._movie.stop()
+        self._movie.start()
+        self.show()
+        self._hide_timer.start(self.VISIBLE_MS)
+
+    def mouseReleaseEvent(self, e) -> None:
+        if e.button() == Qt.LeftButton:
+            self._hide_timer.stop()
             self._movie.stop()
             self.hide()

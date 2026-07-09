@@ -13,6 +13,7 @@ from helper.satellite import SatelliteRing
 from helper.settings_ui import SettingsDialog
 from helper.trigger import (
     NotificationEffect,
+    PreCompactEffect,
     SpeechBubble,
     ThinkingEffect,
     Toast,
@@ -58,11 +59,13 @@ class HelperApp:
         self.trigger_watcher.postToolUseTriggered.connect(self._on_posttooluse_trigger)
         self.trigger_watcher.notificationTriggered.connect(self._on_notification_trigger)
         self.trigger_watcher.userPromptSubmitTriggered.connect(self._on_userpromptsubmit_trigger)
+        self.trigger_watcher.preCompactTriggered.connect(self._on_precompact_trigger)
         self._toasts = []
         self._speech_bubble = None
         self._tooluse_effect = None
         self._notification_effect = None
         self._thinking_effect = None
+        self._precompact_effect = None
         self._apply_trigger_cfg()
 
         self._build_tray()
@@ -224,6 +227,17 @@ class HelperApp:
         if self._notification_effect is None:
             self._notification_effect = NotificationEffect()
         self._notification_effect.play(self.bubble.geometry().center())
+        self.bubble.raise_()
+
+    def _on_precompact_trigger(self, _data: dict):
+        """對話即將被壓縮的提醒：右上角小圖示一閃即逝，GIF/Live2D 模式都顯示；
+        Live2D 角色若有設定對應 reaction 也會一併觸發。"""
+        if self._live2d_mode():
+            self.bubble.live2d_react("PreCompact")
+        if self._precompact_effect is None:
+            self._precompact_effect = PreCompactEffect()
+        rect = self.bubble.geometry()
+        self._precompact_effect.play(rect.topRight())
         self.bubble.raise_()
 
     # ── 系統匣（FR-21～23）───────────────────────────────────────────────
