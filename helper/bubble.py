@@ -26,11 +26,22 @@ LIVE2D_W, LIVE2D_H = 280, 420
 LIVE2D_FPS_MS = 33
 
 # Live2D 用量光環（地上橢圓，起訖點在正前方／下緣，中段會被角色身體自然遮住）
-LIVE2D_RING_CENTER_Y = LIVE2D_H - 38
+LIVE2D_RING_CENTER_Y_MARGIN = 38  # 光環中心距視窗底部的距離
 LIVE2D_RING_RX = 90
 LIVE2D_RING_RY = 26
 LIVE2D_RING_GAP_X = 8
 LIVE2D_RING_GAP_Y = 5
+
+DEFAULT_LIVE2D_LAYOUT = {
+    "arc_top_offset": 90,
+    "w": LIVE2D_W,
+    "h": LIVE2D_H,
+    "scale": 1.0,  # 視窗開大留白動作空間時，用這個縮小角色維持原本視覺大小
+    "fps_ms": LIVE2D_FPS_MS,
+    "ring_center_y_margin": LIVE2D_RING_CENTER_Y_MARGIN,
+    "ring_rx": LIVE2D_RING_RX,
+    "ring_ry": LIVE2D_RING_RY,
+}
 
 SEV_COLOR = {"normal": "#44cc66", "warning": "#f0a030", "critical": "#ff4444"}
 SEV_COLOR = {"normal": "#74c991", "warning": "#d9a84e", "critical": "#d97757"}
@@ -59,13 +70,15 @@ class Bubble(QWidget):
         self._live2d = None
         self._live2d_character = DEFAULT_CHARACTER
         self._live2d_pixmap = None
+        self._live2d_layout = dict(DEFAULT_LIVE2D_LAYOUT)
         self._live2d_timer = QTimer(self)
-        self._live2d_timer.setInterval(LIVE2D_FPS_MS)
+        self._live2d_timer.setInterval(self._live2d_layout["fps_ms"])
         self._live2d_timer.timeout.connect(self._tick_live2d)
         self._press_offset = None
         self._press_global = None
         self._dragged = False
         self._usage_enabled = False
+        self._show_elapsed_line = True
         self._usage_items = []
         self._usage_error = ""
         self._incidents = []
@@ -77,9 +90,12 @@ class Bubble(QWidget):
             return
         self._mode = mode
         if mode == MODE_LIVE2D:
-            self.setFixedSize(LIVE2D_W, LIVE2D_H)
+            w, h = self._live2d_layout["w"], self._live2d_layout["h"]
+            self.setFixedSize(w, h)
             if self._live2d is None:
-                self._live2d = Live2DRenderer(self._live2d_character, LIVE2D_W, LIVE2D_H)
+                self._live2d = Live2DRenderer(
+                    self._live2d_character, w, h, self._live2d_layout["scale"]
+                )
             self._live2d_timer.start()
         else:
             self._live2d_timer.stop()
@@ -93,7 +109,30 @@ class Bubble(QWidget):
         self._live2d_character = character_id
         if self._live2d is not None:
             self._live2d.dispose()
-            self._live2d = Live2DRenderer(character_id, LIVE2D_W, LIVE2D_H)
+            w, h = self._live2d_layout["w"], self._live2d_layout["h"]
+            self._live2d = Live2DRenderer(character_id, w, h, self._live2d_layout["scale"])
+
+    def set_live2d_layout(self, layout: dict) -> None:
+        """套用 Live2D 版面設定（弧形錨點、視窗尺寸、縮放、FPS、用量光環大小）；
+        尺寸變動時重建渲染器，只有縮放變動則直接套用不必重建。"""
+        old = self._live2d_layout
+        self._live2d_layout = dict(layout)
+        self._live2d_timer.setInterval(self._live2d_layout["fps_ms"])
+        size_changed = (old["w"], old["h"]) != (self._live2d_layout["w"], self._live2d_layout["h"])
+        scale_changed = old["scale"] != self._live2d_layout["scale"]
+        if size_changed and self._live2d is not None:
+            self._live2d.dispose()
+            self._live2d = Live2DRenderer(
+                self._live2d_character,
+                self._live2d_layout["w"],
+                self._live2d_layout["h"],
+                self._live2d_layout["scale"],
+            )
+        elif scale_changed and self._live2d is not None:
+            self._live2d.set_scale(self._live2d_layout["scale"])
+        if size_changed and self._mode == MODE_LIVE2D:
+            self.setFixedSize(self._live2d_layout["w"], self._live2d_layout["h"])
+        self.update()
 
     def _tick_live2d(self) -> None:
         self._live2d_pixmap = QPixmap.fromImage(self._live2d.render_frame())
@@ -142,6 +181,10 @@ class Bubble(QWidget):
         self.update()
 
     # ── 用量 ─────────────────────────────────────────────────────────────
+
+    def set_show_elapsed_line(self, show: bool) -> None:
+        self._show_elapsed_line = show
+        self.update()
 
     def set_usage_enabled(self, enabled: bool) -> None:
         self._usage_enabled = enabled
@@ -234,6 +277,9 @@ class Bubble(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         if self._usage_enabled:
             self._paint_live2d_rings(p)
+            badge_color = incident_badge_color(self._incidents)
+            if badge_color:
+                self._paint_live2d_incident_badge(p, badge_color)
         if self._live2d_pixmap is not None and not self._live2d_pixmap.isNull():
             p.drawPixmap(0, 0, self._live2d_pixmap)
 
@@ -268,7 +314,7 @@ class Bubble(QWidget):
             span = -round(item["percent"] / 100 * 360 * 16)
             p.drawArc(rect, 90 * 16, span)
             # 均勻消耗基準白線：時間經過百分比的位置
-            if item.get("elapsed") is not None:
+            if self._show_elapsed_line and item.get("elapsed") is not None:
                 ang = math.radians(90 - item["elapsed"] * 3.6)
                 inner, outer = radius - RING_W / 2 - 1, radius + RING_W / 2 + 1
                 p.setPen(QPen(QColor("white"), 1.5))
@@ -279,12 +325,13 @@ class Bubble(QWidget):
 
     def _paint_live2d_rings(self, p: QPainter) -> None:
         """扁平橢圓光環：起訖點在下緣（正前方），順時針掃出進度；50% 落在上緣（角色身後，可能被遮擋）。"""
-        cx = LIVE2D_W / 2
-        cy = LIVE2D_RING_CENTER_Y
+        layout = self._live2d_layout
+        cx = layout["w"] / 2
+        cy = layout["h"] - layout["ring_center_y_margin"]
         base = QColor(ERROR_RING if self._usage_error else BASE_RING)
         for i in range(3):
-            rx = LIVE2D_RING_RX + i * LIVE2D_RING_GAP_X
-            ry = LIVE2D_RING_RY + i * LIVE2D_RING_GAP_Y
+            rx = layout["ring_rx"] + i * LIVE2D_RING_GAP_X
+            ry = layout["ring_ry"] + i * LIVE2D_RING_GAP_Y
             rect = QRectF(cx - rx, cy - ry, rx * 2, ry * 2)
             p.setPen(QPen(base, RING_W))
             p.setBrush(Qt.NoBrush)
@@ -297,6 +344,31 @@ class Bubble(QWidget):
             p.setPen(pen)
             span = -round(item["percent"] / 100 * 360 * 16)
             p.drawArc(rect, -90 * 16, span)
+            # 均勻消耗基準白線：時間經過百分比的位置（橢圓，x/y 各自依 rx/ry 縮放）
+            if self._show_elapsed_line and item.get("elapsed") is not None:
+                ang = math.radians(-90 - item["elapsed"] * 3.6)
+                inner_rx, outer_rx = rx - RING_W / 2 - 1, rx + RING_W / 2 + 1
+                inner_ry, outer_ry = ry - RING_W / 2 - 1, ry + RING_W / 2 + 1
+                p.setPen(QPen(QColor("white"), 1.5))
+                p.drawLine(
+                    QPointF(cx + inner_rx * math.cos(ang), cy - inner_ry * math.sin(ang)),
+                    QPointF(cx + outer_rx * math.cos(ang), cy - outer_ry * math.sin(ang)),
+                )
+
+    def _paint_live2d_incident_badge(self, p: QPainter, color: str) -> None:
+        """Live2D 模式：畫在用量光環最外圈右上角（會被角色擋住也沒關係，與 GIF 模式同款小圓點）。"""
+        layout = self._live2d_layout
+        cx = layout["w"] / 2
+        cy = layout["h"] - layout["ring_center_y_margin"]
+        rx = layout["ring_rx"] #+ 2 * LIVE2D_RING_GAP_X
+        ry = layout["ring_ry"] #+ 2 * LIVE2D_RING_GAP_Y
+        ang = math.radians(45)
+        x = cx + rx * math.cos(ang)
+        y = cy - ry * math.sin(ang)
+        badge_r = 8
+        p.setPen(QPen(QColor("#1c1c1c"), 2))
+        p.setBrush(QColor(color))
+        p.drawEllipse(QPointF(x, y), badge_r, badge_r)
 
     def _paint_incident_badge(self, p: QPainter, cx: float, cy: float, r: float, color: str) -> None:
         """今日有事故仍在處理時，於主圓圈右上角顯示小圓點徽章（類似狀態指示點）。"""

@@ -14,7 +14,7 @@ from PySide6.QtCore import (
     Qt,
     Signal,
 )
-from PySide6.QtGui import QColor, QMovie, QPainter, QPixmap
+from PySide6.QtGui import QColor, QFontMetrics, QMovie, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import QWidget
 
 DEFAULT_TRIGGER_DIR = os.path.join(os.path.expanduser("~"), ".claude-triggers")
@@ -80,8 +80,16 @@ class TriggerWatcher(QObject):
             self.userPromptSubmitTriggered.emit(data)
 
         processed_dir = os.path.join(self._dir, "processed")
-        os.makedirs(processed_dir, exist_ok=True)
-        shutil.move(path, os.path.join(processed_dir, os.path.basename(path)))
+        try:
+            os.makedirs(processed_dir, exist_ok=True)
+            shutil.move(path, os.path.join(processed_dir, os.path.basename(path)))
+        except OSError:
+            # 搬移失敗（例如寫入端還持有檔案鎖）也要確保原檔被清掉，
+            # 否則下個 2 秒 poll 會撿到同一個檔案，讓同一事件無限重複觸發。
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
 
 class Toast(QWidget):
@@ -169,6 +177,65 @@ class Toast(QWidget):
             self._anim.setEndValue(self._anim.endValue() + delta)
         else:
             self.move(self.pos() + delta)
+
+
+class SpeechBubble(QWidget):
+    """Live2D 模式的 Stop 事件通知：漫畫對話框，不會自動消失，點擊後才關閉。"""
+
+    WIDTH, HEIGHT = 200, 60
+    TAIL_W, TAIL_H = 20, 8  # 對話框下緣的尖角尾巴，指向角色頭部
+    OFFSET_X, OFFSET_Y = 40, 60  # 相對錨點的位移：正值往右／往下
+
+    def __init__(self, text: str, tip_pos: QPoint):
+        super().__init__(
+            None,
+            Qt.FramelessWindowHint
+            | Qt.Tool
+            | Qt.WindowStaysOnTopHint
+            | Qt.WindowDoesNotAcceptFocus,
+        )
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.setFixedSize(self.WIDTH, self.HEIGHT + self.TAIL_H)
+        self._text = text
+        self.move(
+            tip_pos.x() - self.WIDTH // 2 + self.OFFSET_X,
+            tip_pos.y() - self.HEIGHT - self.TAIL_H + self.OFFSET_Y,
+        )
+        self.show()
+
+    def paintEvent(self, _event) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+
+        body = QRectF(2, 2, self.WIDTH - 4, self.HEIGHT - 4)
+        path = QPainterPath()
+        path.addRoundedRect(body, 14, 14)
+        tail_cx = self.WIDTH / 2
+        path.moveTo(tail_cx - self.TAIL_W / 2 -40, self.HEIGHT - 4)
+        path.lineTo(tail_cx -40, self.HEIGHT + self.TAIL_H - 4)
+        path.lineTo(tail_cx + self.TAIL_W / 2 -40, self.HEIGHT - 4)
+        path.closeSubpath()
+
+        fill = QColor("#ffffff")
+        fill.setAlphaF(0.6)
+        p.setPen(Qt.NoPen)
+        p.setBrush(fill)
+        p.drawPath(path)
+
+        font = p.font()
+        font.setBold(True)
+        font.setPointSize(11)
+        p.setFont(font)
+        p.setPen(QColor("#3a2410"))
+        p.drawText(body.adjusted(8, 4, -8, -4), Qt.AlignCenter | Qt.TextWordWrap, self._text)
+
+    def mouseReleaseEvent(self, e) -> None:
+        if e.button() == Qt.LeftButton:
+            self.close()
+
+    def shift(self, delta: QPoint) -> None:
+        self.move(self.pos() + delta)
 
 
 class ToolUseEffect(QWidget):

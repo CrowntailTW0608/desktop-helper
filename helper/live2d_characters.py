@@ -32,9 +32,10 @@ CHARACTERS = {
     "mao": {
         "name": "Mao (zh-Hans)",
         "model_path": os.path.join("mao_zh-Hans", "runtime", "mao_pro.model3.json"),
-        "idle": [{"group": "Idle", "index": 0}, {"group": "", "index": 1}],
+        "idle": [{"group": "Idle", "index": 0}, {"group": "", "index": 0}, {"group": "", "index": 1}],
         "reactions": {
-            "PreToolUse": {"motion": {"group": "", "index": 2}},
+            "UserPromptSubmit" : {"motion": {"group": "", "index": 2}},
+            "PreToolUse": {"motion": {"group": "", "index": 3}},
             "PostToolUse": {"idle": True},
             "Stop": {"motion": {"group": "", "index": 5, "hold": 9.23}},
             "Clicked": {"motion": {"group": "", "index": 1}},

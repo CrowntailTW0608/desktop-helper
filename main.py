@@ -13,6 +13,7 @@ from helper.satellite import SatelliteRing
 from helper.settings_ui import SettingsDialog
 from helper.trigger import (
     NotificationEffect,
+    SpeechBubble,
     ThinkingEffect,
     Toast,
     ToolUseEffect,
@@ -30,12 +31,14 @@ class HelperApp:
         self.bubble = Bubble()
         self._apply_gif_cfg()
         self.bubble.set_live2d_character(self.cfg["live2d_character"])
+        self.bubble.set_live2d_layout(self.cfg["live2d_layout"])
         self.bubble.set_display_mode(self.cfg["display_mode"])
         self._restore_position()
 
         self.ring = SatelliteRing()
         self.ring.set_links(self.cfg["links"])
         self.ring.settingsRequested.connect(self.open_settings)
+        self.ring.quitRequested.connect(self.app.quit)
         self.bubble.clicked.connect(self._on_bubble_clicked)
         self.bubble.moved.connect(self._save_position)
         self._last_bubble_pos = self.bubble.pos()
@@ -56,6 +59,7 @@ class HelperApp:
         self.trigger_watcher.notificationTriggered.connect(self._on_notification_trigger)
         self.trigger_watcher.userPromptSubmitTriggered.connect(self._on_userpromptsubmit_trigger)
         self._toasts = []
+        self._speech_bubble = None
         self._tooluse_effect = None
         self._notification_effect = None
         self._thinking_effect = None
@@ -79,14 +83,11 @@ class HelperApp:
         self.cfg["position"] = {"x": x, "y": y}
         config.save(self.cfg)
 
-    # Live2D 弧形錨點的垂直微調：正值往下（更貼近角色頭部）、負值往上（離角色更遠）。
-    LIVE2D_ARC_TOP_OFFSET = 90
-
     def _satellite_anchor(self) -> tuple[QPoint, str]:
         """Live2D 模式：以角色上緣為錨點展開弧形（像彩虹）；GIF 模式：以主圓圈中心環繞一整圈。"""
         rect = self.bubble.geometry()
         if self._live2d_mode():
-            anchor_y = rect.top() + self.LIVE2D_ARC_TOP_OFFSET
+            anchor_y = rect.top() + self.cfg["live2d_layout"]["arc_top_offset"]
             return QPoint(rect.center().x(), anchor_y), "arc"
         return rect.center(), "circle"
 
@@ -98,6 +99,8 @@ class HelperApp:
         self.ring.reposition(self._satellite_anchor()[0])
         for toast in self._toasts:
             toast.shift(delta)
+        if self._speech_bubble is not None:
+            self._speech_bubble.shift(delta)
         if self._tooluse_effect and self._tooluse_effect.isVisible():
             self._tooluse_effect.move(self._tooluse_effect.pos() + delta)
         if self._notification_effect and self._notification_effect.isVisible():
@@ -117,6 +120,7 @@ class HelperApp:
             self.settings.gifChanged.connect(self._apply_gif_cfg)
             self.settings.displayModeChanged.connect(self._apply_display_mode_cfg)
             self.settings.live2dCharacterChanged.connect(self._apply_live2d_character_cfg)
+            self.settings.live2dLayoutChanged.connect(self._apply_live2d_layout_cfg)
             self.settings.linksChanged.connect(
                 lambda: self.ring.set_links(self.cfg["links"])
             )
@@ -136,10 +140,15 @@ class HelperApp:
     def _apply_live2d_character_cfg(self):
         self.bubble.set_live2d_character(self.cfg["live2d_character"])
 
+    def _apply_live2d_layout_cfg(self):
+        self.bubble.set_live2d_layout(self.cfg["live2d_layout"])
+        self.ring.reposition(self._satellite_anchor()[0])
+
     def _apply_usage_cfg(self):
         cu = self.cfg["claude_usage"]
         enabled = bool(cu["enabled"] and cu["session_key"] and cu["org_id"])
         self.bubble.set_usage_enabled(enabled)
+        self.bubble.set_show_elapsed_line(cu["show_elapsed_line"])
         self.monitor.configure(enabled, cu["session_key"], cu["org_id"])
 
     def _apply_trigger_cfg(self):
@@ -160,6 +169,14 @@ class HelperApp:
     def _on_stop_trigger(self, data: dict):
         if self._live2d_mode():
             self.bubble.live2d_react("Stop")
+            project = data.get("project", "unknown")
+            if self._speech_bubble is not None:
+                self._speech_bubble.close()
+            tip = QPoint(self.bubble.geometry().center().x(), self.bubble.geometry().top())
+            self._speech_bubble = SpeechBubble(f"{project} 完成了唷", tip)
+            self._speech_bubble.destroyed.connect(self._on_speech_bubble_closed)
+            self.bubble.raise_()
+            self._speech_bubble.raise_()
             return
         center = self.bubble.geometry().center()
         land_pos = QPoint(
@@ -170,6 +187,9 @@ class HelperApp:
         toast.destroyed.connect(lambda: self._toasts.remove(toast) if toast in self._toasts else None)
         self._toasts.append(toast)
         self.bubble.raise_()
+
+    def _on_speech_bubble_closed(self):
+        self._speech_bubble = None
 
     def _on_pretooluse_trigger(self, _data: dict):
         if self._live2d_mode():

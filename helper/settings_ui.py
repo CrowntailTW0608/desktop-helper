@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QGroupBox,
@@ -17,11 +18,13 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSpinBox,
+    QTabWidget,
     QVBoxLayout,
+    QWidget,
 )
 
 from helper import autostart, config
-from helper.bubble import MODE_GIF, MODE_LIVE2D
+from helper.bubble import DEFAULT_LIVE2D_LAYOUT, MODE_GIF, MODE_LIVE2D
 from helper.icon import app_icon
 from helper.live2d_characters import CHARACTERS
 from helper.trigger import DEFAULT_TRIGGER_DIR
@@ -100,6 +103,7 @@ class SettingsDialog(QDialog):
     gifChanged = Signal()
     displayModeChanged = Signal()
     live2dCharacterChanged = Signal()
+    live2dLayoutChanged = Signal()
     linksChanged = Signal()
     usageChanged = Signal()
     triggerChanged = Signal()
@@ -111,11 +115,111 @@ class SettingsDialog(QDialog):
         self.setWindowIcon(app_icon())
         self.setMinimumWidth(480)
         root = QVBoxLayout(self)
-        root.addWidget(self._build_appearance())
-        root.addWidget(self._build_links())
-        root.addWidget(self._build_usage())
-        root.addWidget(self._build_trigger())
-        root.addWidget(self._build_general())
+
+        character_box = self._build_live2d_character()
+        appearance_box = self._build_appearance()
+
+        general_tab = QWidget()
+        general_layout = QVBoxLayout(general_tab)
+        general_layout.addWidget(appearance_box)
+        general_layout.addWidget(self._build_links())
+        general_layout.addWidget(self._build_usage())
+        general_layout.addWidget(self._build_trigger())
+        general_layout.addWidget(self._build_general())
+
+        live2d_tab = QWidget()
+        live2d_layout = QVBoxLayout(live2d_tab)
+        live2d_layout.addWidget(character_box)
+        live2d_layout.addWidget(self._build_live2d_layout())
+        live2d_layout.addStretch()
+
+        tabs = QTabWidget()
+        tabs.addTab(general_tab, "一般")
+        tabs.addTab(live2d_tab, "Live2D")
+        root.addWidget(tabs)
+
+    # ── Live2D 角色與版面 ────────────────────────────────────────────────
+
+    def _build_live2d_character(self) -> QGroupBox:
+        box = QGroupBox("角色")
+        row = QHBoxLayout(box)
+        row.addWidget(QLabel("Live2D 角色"))
+        self.character_combo = QComboBox()
+        for character_id, character in CHARACTERS.items():
+            self.character_combo.addItem(character["name"], character_id)
+        self.character_combo.setCurrentIndex(
+            self.character_combo.findData(self.cfg["live2d_character"])
+        )
+        self.character_combo.setEnabled(self.cfg["display_mode"] == MODE_LIVE2D)
+        self.character_combo.currentIndexChanged.connect(self._character_updated)
+        row.addWidget(self.character_combo)
+        row.addStretch()
+        return box
+
+    def _build_live2d_layout(self) -> QGroupBox:
+        box = QGroupBox("版面")
+        form = QFormLayout(box)
+        layout = self.cfg["live2d_layout"]
+
+        def spin(key: str, minimum: int, maximum: int) -> QSpinBox:
+            s = QSpinBox()
+            s.setRange(minimum, maximum)
+            s.setValue(int(layout[key]))
+            s.editingFinished.connect(self._live2d_layout_updated)
+            return s
+
+        self.arc_offset_spin = spin("arc_top_offset", -200, 400)
+        form.addRow("衛星選單弧形錨點偏移（px）", self.arc_offset_spin)
+        self.l2d_w_spin = spin("w", 100, 800)
+        form.addRow("視窗寬度（px）", self.l2d_w_spin)
+        self.l2d_h_spin = spin("h", 100, 1000)
+        form.addRow("視窗高度（px）", self.l2d_h_spin)
+        self.l2d_scale_spin = QDoubleSpinBox()
+        self.l2d_scale_spin.setRange(0.1, 3.0)
+        self.l2d_scale_spin.setSingleStep(0.05)
+        self.l2d_scale_spin.setValue(float(layout["scale"]))
+        self.l2d_scale_spin.editingFinished.connect(self._live2d_layout_updated)
+        form.addRow("角色縮放（視窗開大留動作空間時，調小維持原本大小）", self.l2d_scale_spin)
+        self.l2d_fps_spin = spin("fps_ms", 10, 200)
+        form.addRow("渲染間隔（ms，值越小越流暢但越耗效能）", self.l2d_fps_spin)
+        self.ring_margin_spin = spin("ring_center_y_margin", 0, 400)
+        form.addRow("用量光環中心距視窗底部（px）", self.ring_margin_spin)
+        self.ring_rx_spin = spin("ring_rx", 10, 300)
+        form.addRow("用量光環寬度半徑（px）", self.ring_rx_spin)
+        self.ring_ry_spin = spin("ring_ry", 5, 150)
+        form.addRow("用量光環高度半徑（px）", self.ring_ry_spin)
+
+        reset = QPushButton("還原預設")
+        reset.clicked.connect(self._reset_live2d_layout)
+        form.addRow(reset)
+        return box
+
+    def _live2d_layout_updated(self):
+        layout = self.cfg["live2d_layout"]
+        layout["arc_top_offset"] = self.arc_offset_spin.value()
+        layout["w"] = self.l2d_w_spin.value()
+        layout["h"] = self.l2d_h_spin.value()
+        layout["scale"] = self.l2d_scale_spin.value()
+        layout["fps_ms"] = self.l2d_fps_spin.value()
+        layout["ring_center_y_margin"] = self.ring_margin_spin.value()
+        layout["ring_rx"] = self.ring_rx_spin.value()
+        layout["ring_ry"] = self.ring_ry_spin.value()
+        config.save(self.cfg)
+        self.live2dLayoutChanged.emit()
+
+    def _reset_live2d_layout(self):
+        self.cfg["live2d_layout"] = dict(DEFAULT_LIVE2D_LAYOUT)
+        layout = self.cfg["live2d_layout"]
+        self.arc_offset_spin.setValue(layout["arc_top_offset"])
+        self.l2d_w_spin.setValue(layout["w"])
+        self.l2d_h_spin.setValue(layout["h"])
+        self.l2d_scale_spin.setValue(layout["scale"])
+        self.l2d_fps_spin.setValue(layout["fps_ms"])
+        self.ring_margin_spin.setValue(layout["ring_center_y_margin"])
+        self.ring_rx_spin.setValue(layout["ring_rx"])
+        self.ring_ry_spin.setValue(layout["ring_ry"])
+        config.save(self.cfg)
+        self.live2dLayoutChanged.emit()
 
     # ── 1. 外觀 ──────────────────────────────────────────────────────────
 
@@ -133,20 +237,6 @@ class SettingsDialog(QDialog):
         mode_row.addWidget(self.mode_combo)
         mode_row.addStretch()
         layout.addLayout(mode_row)
-
-        character_row = QHBoxLayout()
-        character_row.addWidget(QLabel("Live2D 角色"))
-        self.character_combo = QComboBox()
-        for character_id, character in CHARACTERS.items():
-            self.character_combo.addItem(character["name"], character_id)
-        self.character_combo.setCurrentIndex(
-            self.character_combo.findData(self.cfg["live2d_character"])
-        )
-        self.character_combo.setEnabled(self.cfg["display_mode"] == MODE_LIVE2D)
-        self.character_combo.currentIndexChanged.connect(self._character_updated)
-        character_row.addWidget(self.character_combo)
-        character_row.addStretch()
-        layout.addLayout(character_row)
 
         self.gif_label = QLabel(self.cfg["gif_path"] or "（預設圖案）")
         self.gif_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -290,6 +380,11 @@ class SettingsDialog(QDialog):
         self.usage_enable.toggled.connect(self._usage_updated)
         form.addRow(self.usage_enable)
 
+        self.elapsed_line_enable = QCheckBox("顯示均勻消耗基準白線")
+        self.elapsed_line_enable.setChecked(cu["show_elapsed_line"])
+        self.elapsed_line_enable.toggled.connect(self._usage_updated)
+        form.addRow(self.elapsed_line_enable)
+
         self.key_edit = QLineEdit(cu["session_key"])
         self.key_edit.setEchoMode(QLineEdit.Password)
         self.key_edit.editingFinished.connect(self._usage_updated)
@@ -303,6 +398,7 @@ class SettingsDialog(QDialog):
     def _usage_updated(self, *_):
         cu = self.cfg["claude_usage"]
         cu["enabled"] = self.usage_enable.isChecked()
+        cu["show_elapsed_line"] = self.elapsed_line_enable.isChecked()
         cu["session_key"] = self.key_edit.text().strip()
         cu["org_id"] = self.org_edit.text().strip()
         config.save(self.cfg)

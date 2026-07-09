@@ -37,12 +37,13 @@ from helper.live2d_characters import CHARACTERS, model_path
 class Live2DRenderer:
     """一顆模型的離屏渲染器。每次呼叫 render_frame() 回傳當前畫面的 QImage（RGBA，含真實 alpha）。"""
 
-    def __init__(self, character_id: str, width: int, height: int):
+    def __init__(self, character_id: str, width: int, height: int, scale: float = 1.0):
         self.width = width
         self.height = height
         self._character = CHARACTERS[character_id]
         self._idle_pos = 0
         self._motion_gen = 0
+        self._loop_motion = None  # (group, index, priority)：目前需要手動維持循環播放的動作
 
         fmt = QSurfaceFormat()
         fmt.setAlphaBufferSize(8)
@@ -71,10 +72,14 @@ class Live2DRenderer:
         self.model = live2d.LAppModel()
         self.model.LoadModelJson(model_path(character_id))
         self.model.Resize(width, height)
+        self.model.SetScale(scale)
 
         self._expressions = [e for e in self.model.GetExpressionIds() if e.strip() not in ("bl", "anyazZZ")]
 
         self.start_idle()
+
+    def set_scale(self, scale: float) -> None:
+        self.model.SetScale(scale)
 
     def _start_motion(self, group: str, index: int, priority_name: str, on_finish=None) -> None:
         # 素材動作皆 Loop=True 永不 finish，優先權判斷（見 Cubism 官方 SDK 行為）永遠不會自然
@@ -101,6 +106,7 @@ class Live2DRenderer:
         判定「priority is too low」而失敗。所有切換都經過我們自己的 Python 狀態機控管，
         底層優先權分級已無意義，故統一用 FORCE 避免這個方向性限制。
         """
+        self._loop_motion = None
         idle_list = self._character["idle"]
         if not idle_list:
             return
@@ -128,11 +134,14 @@ class Live2DRenderer:
         if motion:
             self._motion_gen += 1
             gen = self._motion_gen
+            group, index = motion.get("group", ""), motion["index"]
+            priority = motion.get("priority", "FORCE")
+            hold = motion.get("hold")
+            self._loop_motion = None if hold else (group, index, priority)
             self._start_motion(
-                motion.get("group", ""), motion["index"], motion.get("priority", "FORCE"),
+                group, index, priority,
                 on_finish=lambda *_: QTimer.singleShot(0, self.start_idle),
             )
-            hold = motion.get("hold")
             if hold:
                 # 素材動作多為 Loop=True，永遠不會觸發 onFinish，需靠計時器強制回 idle。
                 QTimer.singleShot(int(hold * 1000), lambda: self._on_hold_expired(gen))
@@ -141,12 +150,26 @@ class Live2DRenderer:
         if gen == self._motion_gen:
             self.start_idle()
 
+    def _keep_loop_motion_alive(self) -> None:
+        """部分素材標示 Loop=True 但底層播完後不會自動重播、也不觸發 onFinish，
+        只會停在最後一幀；每幀檢查一次，播完就手動重新 StartMotion 維持循環，
+        直到被 idle / 下個事件（清空 self._loop_motion）取代。"""
+        if self._loop_motion is None:
+            return
+        if self.model.IsMotionFinished():
+            group, index, priority = self._loop_motion
+            self._start_motion(
+                group, index, priority,
+                on_finish=lambda *_: QTimer.singleShot(0, self.start_idle),
+            )
+
     def render_frame(self) -> QImage:
         self._ctx.makeCurrent(self._surface)
         glBindFramebuffer(GL_FRAMEBUFFER, self._fbo)
         glViewport(0, 0, self.width, self.height)
         live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
         self.model.Update()
+        self._keep_loop_motion_alive()
         self.model.Draw()
         raw = glReadPixels(0, 0, self.width, self.height, GL_RGBA, GL_UNSIGNED_BYTE)
         buf = raw if isinstance(raw, (bytes, bytearray)) else ctypes.string_at(raw, self.width * self.height * 4)

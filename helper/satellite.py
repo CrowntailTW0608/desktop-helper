@@ -25,6 +25,9 @@ ORBIT_R = 90  # circle 模式（GIF）：以中心點環繞一整圈
 ARC_R = 120  # arc 模式（Live2D）：以角色上緣為錨點，向上展開半圓弧（像彩虹）
 ANIM_MS = 200
 
+QUIT_D = 22  # 「結束程式」子衛星：附掛在設定圖示右上角的小圓點，不佔環形排列位置
+QUIT_OFFSET = QPoint(30, -8)
+
 
 def is_url(path: str) -> bool:
     return path.startswith(("http://", "https://"))
@@ -77,7 +80,7 @@ def open_target(path: str) -> None:
 class Satellite(QWidget):
     activated = Signal()
 
-    def __init__(self, tooltip: str, icon=None, text: str = ""):
+    def __init__(self, tooltip: str, icon=None, text: str = "", diameter: int = SAT_D):
         super().__init__(
             None,
             Qt.FramelessWindowHint
@@ -86,7 +89,8 @@ class Satellite(QWidget):
             | Qt.WindowDoesNotAcceptFocus,
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setFixedSize(SAT_D, SAT_D)
+        self._d = diameter
+        self.setFixedSize(self._d, self._d)
         self.setToolTip(tooltip)
         self.setCursor(Qt.PointingHandCursor)
         self._icon = icon
@@ -97,13 +101,15 @@ class Satellite(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         p.setBrush(QColor(37, 37, 37, 235))
         p.setPen(QPen(QColor("#555555"), 1))
-        p.drawEllipse(QRectF(1, 1, SAT_D - 2, SAT_D - 2))
+        p.drawEllipse(QRectF(1, 1, self._d - 2, self._d - 2))
         if self._icon is not None and not self._icon.isNull():
-            pm = self._icon.pixmap(28, 28)
-            p.drawPixmap(QRect(10, 10, 28, 28), pm)
+            icon_d = round(self._d * 0.58)
+            offset = round((self._d - icon_d) / 2)
+            pm = self._icon.pixmap(icon_d, icon_d)
+            p.drawPixmap(QRect(offset, offset, icon_d, icon_d), pm)
         else:
             p.setPen(QColor("#e0e0e0"))
-            p.setFont(QFont("Segoe UI Emoji", 16))
+            p.setFont(QFont("Segoe UI Emoji", round(self._d * 0.33)))
             p.drawText(self.rect(), Qt.AlignCenter, self._text)
 
     def mouseReleaseEvent(self, e) -> None:
@@ -115,11 +121,13 @@ class SatelliteRing(QObject):
     """管理衛星的建立、排列與動畫。"""
 
     settingsRequested = Signal()
+    quitRequested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._links = []
         self._sats = []
+        self._quit_sat = None
         self._expanded = False
         self._mode = "circle"
         self._group = None
@@ -162,8 +170,11 @@ class SatelliteRing(QObject):
         n = len(self._sats)
         start = anchor - QPoint(SAT_D // 2, SAT_D // 2)
         self._group = QParallelAnimationGroup(self)
+        gear_target = None
         for i, sat in enumerate(self._sats):
             target = self._target_pos(anchor, i, n, mode)
+            if i == n - 1:
+                gear_target = target
             sat.move(start)
             sat.setWindowOpacity(0.0)
             sat.show()
@@ -177,6 +188,21 @@ class SatelliteRing(QObject):
                 anim.setEndValue(end)
                 anim.setEasingCurve(QEasingCurve.OutCubic)
                 self._group.addAnimation(anim)
+
+        quit_target = gear_target + QUIT_OFFSET
+        self._quit_sat.move(start)
+        self._quit_sat.setWindowOpacity(0.0)
+        self._quit_sat.show()
+        for prop, begin, end in (
+            (b"pos", start, quit_target),
+            (b"windowOpacity", 0.0, 1.0),
+        ):
+            anim = QPropertyAnimation(self._quit_sat, prop, self._group)
+            anim.setDuration(ANIM_MS)
+            anim.setStartValue(begin)
+            anim.setEndValue(end)
+            anim.setEasingCurve(QEasingCurve.OutCubic)
+            self._group.addAnimation(anim)
         self._group.start()
 
     def reposition(self, anchor: QPoint) -> None:
@@ -187,9 +213,15 @@ class SatelliteRing(QObject):
             self._group.stop()
             self._group = None
         n = len(self._sats)
+        gear_target = None
         for i, sat in enumerate(self._sats):
+            target = self._target_pos(anchor, i, n, self._mode)
+            if i == n - 1:
+                gear_target = target
             sat.setWindowOpacity(1.0)
-            sat.move(self._target_pos(anchor, i, n, self._mode))
+            sat.move(target)
+        self._quit_sat.setWindowOpacity(1.0)
+        self._quit_sat.move(gear_target + QUIT_OFFSET)
 
     def collapse(self, animated: bool = True) -> None:
         if not self._expanded:
@@ -198,8 +230,9 @@ class SatelliteRing(QObject):
         if self._group:
             self._group.stop()
             self._group = None
-        sats = self._sats
+        sats = self._sats + [self._quit_sat]
         self._sats = []
+        self._quit_sat = None
         if not animated:
             for sat in sats:
                 sat.close()
@@ -226,6 +259,8 @@ class SatelliteRing(QObject):
         gear = Satellite("設定", text="⚙")
         gear.activated.connect(self._on_gear)
         self._sats.append(gear)
+        self._quit_sat = Satellite("結束程式", text="✕", diameter=QUIT_D)
+        self._quit_sat.activated.connect(self._on_quit)
 
     def _icon_for(self, link: dict):
         """回傳 (icon, text)：系統圖示、地球、或名稱前 1～2 字。"""
@@ -246,6 +281,10 @@ class SatelliteRing(QObject):
     def _on_gear(self) -> None:
         self.collapse()
         self.settingsRequested.emit()
+
+    def _on_quit(self) -> None:
+        self.collapse()
+        self.quitRequested.emit()
 
     def _open(self, link: dict) -> None:
         self.collapse()
