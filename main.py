@@ -174,7 +174,10 @@ class HelperApp:
             self.bubble.live2d_react("Stop")
             project = data.get("project", "unknown")
             if self._speech_bubble is not None:
-                self._speech_bubble.close()
+                old_bubble = self._speech_bubble
+                self._speech_bubble = None
+                old_bubble.destroyed.disconnect(self._on_speech_bubble_closed)
+                old_bubble.close()
             tip = QPoint(self.bubble.geometry().center().x(), self.bubble.geometry().top())
             self._speech_bubble = SpeechBubble(f"{project} 完成了唷", tip)
             self._speech_bubble.destroyed.connect(self._on_speech_bubble_closed)
