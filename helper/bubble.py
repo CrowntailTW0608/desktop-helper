@@ -1,4 +1,4 @@
-"""主圓圈視窗：GIF（單張/資料夾輪播）、拖曳、點擊、用量圓環繪製"""
+"""主圓圈視窗：GIF（單張/資料夾輪播）或 Live2D 完整模型、拖曳、點擊、用量圓環繪製"""
 
 import glob
 import math
@@ -6,9 +6,11 @@ import os
 import random
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QMovie, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QColor, QMovie, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QToolTip, QWidget
 
+from helper.live2d_characters import CHARACTERS, DEFAULT_CHARACTER
+from helper.live2d_view import Live2DRenderer
 from helper.usage import STATUS_ZH, format_reset_time, incident_badge_color
 
 BUBBLE_D = 96
@@ -16,6 +18,19 @@ RING_W = 3
 RING_GAP = 2
 WINDOW = 128  # 三環外緣約 126px（6.2 節）
 DRAG_THRESHOLD = 6
+
+MODE_GIF = "gif"
+MODE_LIVE2D = "live2d"
+
+LIVE2D_W, LIVE2D_H = 280, 420
+LIVE2D_FPS_MS = 33
+
+# Live2D 用量光環（地上橢圓，起訖點在正前方／下緣，中段會被角色身體自然遮住）
+LIVE2D_RING_CENTER_Y = LIVE2D_H - 38
+LIVE2D_RING_RX = 90
+LIVE2D_RING_RY = 26
+LIVE2D_RING_GAP_X = 8
+LIVE2D_RING_GAP_Y = 5
 
 SEV_COLOR = {"normal": "#44cc66", "warning": "#f0a030", "critical": "#ff4444"}
 SEV_COLOR = {"normal": "#74c991", "warning": "#d9a84e", "critical": "#d97757"}
@@ -35,11 +50,18 @@ class Bubble(QWidget):
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(WINDOW, WINDOW)
+        self._mode = MODE_GIF
         self._movie = None
         self._gif_dir = ""
         self._current_gif = ""
         self._rotate_timer = QTimer(self)
         self._rotate_timer.timeout.connect(self._next_gif)
+        self._live2d = None
+        self._live2d_character = DEFAULT_CHARACTER
+        self._live2d_pixmap = None
+        self._live2d_timer = QTimer(self)
+        self._live2d_timer.setInterval(LIVE2D_FPS_MS)
+        self._live2d_timer.timeout.connect(self._tick_live2d)
         self._press_offset = None
         self._press_global = None
         self._dragged = False
@@ -47,6 +69,40 @@ class Bubble(QWidget):
         self._usage_items = []
         self._usage_error = ""
         self._incidents = []
+
+    # ── 顯示模式（GIF / Live2D）──────────────────────────────────────────
+
+    def set_display_mode(self, mode: str) -> None:
+        if mode not in (MODE_GIF, MODE_LIVE2D) or mode == self._mode:
+            return
+        self._mode = mode
+        if mode == MODE_LIVE2D:
+            self.setFixedSize(LIVE2D_W, LIVE2D_H)
+            if self._live2d is None:
+                self._live2d = Live2DRenderer(self._live2d_character, LIVE2D_W, LIVE2D_H)
+            self._live2d_timer.start()
+        else:
+            self._live2d_timer.stop()
+            self.setFixedSize(WINDOW, WINDOW)
+        self.update()
+
+    def set_live2d_character(self, character_id: str) -> None:
+        """切換 Live2D 角色；若目前正在 Live2D 模式，立即重建渲染器。"""
+        if character_id not in CHARACTERS or character_id == self._live2d_character:
+            return
+        self._live2d_character = character_id
+        if self._live2d is not None:
+            self._live2d.dispose()
+            self._live2d = Live2DRenderer(character_id, LIVE2D_W, LIVE2D_H)
+
+    def _tick_live2d(self) -> None:
+        self._live2d_pixmap = QPixmap.fromImage(self._live2d.render_frame())
+        self.update()
+
+    def live2d_react(self, event: str) -> None:
+        """對應 trigger 事件；僅在 Live2D 模式且模型已載入時生效，行為由角色設定驅動。"""
+        if self._live2d is not None:
+            self._live2d.react(event)
 
     # ── GIF（FR-2a：檔案單張、資料夾輪播）────────────────────────────────
 
@@ -141,6 +197,10 @@ class Bubble(QWidget):
     # ── 繪製 ─────────────────────────────────────────────────────────────
 
     def paintEvent(self, _event) -> None:
+        if self._mode == MODE_LIVE2D:
+            self._paint_live2d()
+            return
+
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         cx = cy = WINDOW / 2
@@ -167,6 +227,15 @@ class Bubble(QWidget):
             badge_color = incident_badge_color(self._incidents)
             if badge_color:
                 self._paint_incident_badge(p, cx, cy, r, badge_color)
+
+    def _paint_live2d(self) -> None:
+        """Live2D 模式：先畫地上用量光環（若啟用），角色畫在上層，自然遮住光環後半段。"""
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        if self._usage_enabled:
+            self._paint_live2d_rings(p)
+        if self._live2d_pixmap is not None and not self._live2d_pixmap.isNull():
+            p.drawPixmap(0, 0, self._live2d_pixmap)
 
     def _paint_default_face(self, p: QPainter, circle: QRectF) -> None:
         """未設定 GIF 時的預設外觀（FR-3）：純色圓 + 簡單笑臉。"""
@@ -207,6 +276,27 @@ class Bubble(QWidget):
                     QPointF(cx + inner * math.cos(ang), cy - inner * math.sin(ang)),
                     QPointF(cx + outer * math.cos(ang), cy - outer * math.sin(ang)),
                 )
+
+    def _paint_live2d_rings(self, p: QPainter) -> None:
+        """扁平橢圓光環：起訖點在下緣（正前方），順時針掃出進度；50% 落在上緣（角色身後，可能被遮擋）。"""
+        cx = LIVE2D_W / 2
+        cy = LIVE2D_RING_CENTER_Y
+        base = QColor(ERROR_RING if self._usage_error else BASE_RING)
+        for i in range(3):
+            rx = LIVE2D_RING_RX + i * LIVE2D_RING_GAP_X
+            ry = LIVE2D_RING_RY + i * LIVE2D_RING_GAP_Y
+            rect = QRectF(cx - rx, cy - ry, rx * 2, ry * 2)
+            p.setPen(QPen(base, RING_W))
+            p.setBrush(Qt.NoBrush)
+            p.drawEllipse(rect)
+            if self._usage_error or i >= len(self._usage_items):
+                continue
+            item = self._usage_items[i]
+            pen = QPen(QColor(SEV_COLOR.get(item["severity"], "#4a9eff")), RING_W)
+            pen.setCapStyle(Qt.RoundCap)
+            p.setPen(pen)
+            span = -round(item["percent"] / 100 * 360 * 16)
+            p.drawArc(rect, -90 * 16, span)
 
     def _paint_incident_badge(self, p: QPainter, cx: float, cy: float, r: float, color: str) -> None:
         """今日有事故仍在處理時，於主圓圈右上角顯示小圓點徽章（類似狀態指示點）。"""

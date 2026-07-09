@@ -7,7 +7,7 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from helper import config
-from helper.bubble import Bubble
+from helper.bubble import MODE_LIVE2D, Bubble
 from helper.icon import app_icon
 from helper.satellite import SatelliteRing
 from helper.settings_ui import SettingsDialog
@@ -29,14 +29,14 @@ class HelperApp:
 
         self.bubble = Bubble()
         self._apply_gif_cfg()
+        self.bubble.set_live2d_character(self.cfg["live2d_character"])
+        self.bubble.set_display_mode(self.cfg["display_mode"])
         self._restore_position()
 
         self.ring = SatelliteRing()
         self.ring.set_links(self.cfg["links"])
         self.ring.settingsRequested.connect(self.open_settings)
-        self.bubble.clicked.connect(
-            lambda: self.ring.toggle(self.bubble.geometry().center())
-        )
+        self.bubble.clicked.connect(self._on_bubble_clicked)
         self.bubble.moved.connect(self._save_position)
         self._last_bubble_pos = self.bubble.pos()
         self.bubble.dragMoved.connect(self._on_bubble_dragged)
@@ -79,12 +79,23 @@ class HelperApp:
         self.cfg["position"] = {"x": x, "y": y}
         config.save(self.cfg)
 
+    # Live2D 弧形錨點的垂直微調：正值往下（更貼近角色頭部）、負值往上（離角色更遠）。
+    LIVE2D_ARC_TOP_OFFSET = 90
+
+    def _satellite_anchor(self) -> tuple[QPoint, str]:
+        """Live2D 模式：以角色上緣為錨點展開弧形（像彩虹）；GIF 模式：以主圓圈中心環繞一整圈。"""
+        rect = self.bubble.geometry()
+        if self._live2d_mode():
+            anchor_y = rect.top() + self.LIVE2D_ARC_TOP_OFFSET
+            return QPoint(rect.center().x(), anchor_y), "arc"
+        return rect.center(), "circle"
+
     def _on_bubble_dragged(self):
         """主圓圈被拖曳時，衛星選單、吐司、GIF 疊圖都跟著相對移動。"""
         new_pos = self.bubble.pos()
         delta = new_pos - self._last_bubble_pos
         self._last_bubble_pos = new_pos
-        self.ring.reposition(self.bubble.geometry().center())
+        self.ring.reposition(self._satellite_anchor()[0])
         for toast in self._toasts:
             toast.shift(delta)
         if self._tooluse_effect and self._tooluse_effect.isVisible():
@@ -104,6 +115,8 @@ class HelperApp:
         if self.settings is None:
             self.settings = SettingsDialog(self.cfg)
             self.settings.gifChanged.connect(self._apply_gif_cfg)
+            self.settings.displayModeChanged.connect(self._apply_display_mode_cfg)
+            self.settings.live2dCharacterChanged.connect(self._apply_live2d_character_cfg)
             self.settings.linksChanged.connect(
                 lambda: self.ring.set_links(self.cfg["links"])
             )
@@ -115,6 +128,13 @@ class HelperApp:
 
     def _apply_gif_cfg(self):
         self.bubble.set_gif(self.cfg["gif_path"], self.cfg["gif_interval"])
+
+    def _apply_display_mode_cfg(self):
+        self.bubble.set_display_mode(self.cfg["display_mode"])
+        self.ring.reposition(self._satellite_anchor()[0])
+
+    def _apply_live2d_character_cfg(self):
+        self.bubble.set_live2d_character(self.cfg["live2d_character"])
 
     def _apply_usage_cfg(self):
         cu = self.cfg["claude_usage"]
@@ -128,7 +148,19 @@ class HelperApp:
 
     # ── Trigger 反應（Stop 彈吐司 / PostToolUse 播放 GIF）───────────────────
 
+    def _live2d_mode(self) -> bool:
+        return self.cfg["display_mode"] == MODE_LIVE2D
+
+    def _on_bubble_clicked(self):
+        anchor, mode = self._satellite_anchor()
+        self.ring.toggle(anchor, mode)
+        if self._live2d_mode():
+            self.bubble.live2d_react("Clicked")
+
     def _on_stop_trigger(self, data: dict):
+        if self._live2d_mode():
+            self.bubble.live2d_react("Stop")
+            return
         center = self.bubble.geometry().center()
         land_pos = QPoint(
             center.x() - Toast.WIDTH // 2, self.bubble.y() - Toast.HEIGHT + 50
@@ -140,6 +172,9 @@ class HelperApp:
         self.bubble.raise_()
 
     def _on_pretooluse_trigger(self, _data: dict):
+        if self._live2d_mode():
+            self.bubble.live2d_react("PreToolUse")
+            return
         if self._tooluse_effect is None:
             self._tooluse_effect = ToolUseEffect()
         rect = self.bubble.geometry()
@@ -148,10 +183,16 @@ class HelperApp:
         self.bubble.raise_()
 
     def _on_posttooluse_trigger(self, _data: dict):
+        if self._live2d_mode():
+            self.bubble.live2d_react("PostToolUse")
+            return
         if self._tooluse_effect is not None:
             self._tooluse_effect.close_gif()
 
     def _on_userpromptsubmit_trigger(self, _data: dict):
+        if self._live2d_mode():
+            self.bubble.live2d_react("UserPromptSubmit")
+            return
         if self._thinking_effect is None:
             self._thinking_effect = ThinkingEffect()
         rect = self.bubble.geometry()

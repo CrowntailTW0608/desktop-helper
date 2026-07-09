@@ -5,6 +5,7 @@ import os
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QFileDialog,
     QFormLayout,
@@ -20,7 +21,9 @@ from PySide6.QtWidgets import (
 )
 
 from helper import autostart, config
+from helper.bubble import MODE_GIF, MODE_LIVE2D
 from helper.icon import app_icon
+from helper.live2d_characters import CHARACTERS
 from helper.trigger import DEFAULT_TRIGGER_DIR
 
 
@@ -95,6 +98,8 @@ class SettingsDialog(QDialog):
     """設定變更即時生效並寫入設定檔（FR-19）。"""
 
     gifChanged = Signal()
+    displayModeChanged = Signal()
+    live2dCharacterChanged = Signal()
     linksChanged = Signal()
     usageChanged = Signal()
     triggerChanged = Signal()
@@ -117,6 +122,32 @@ class SettingsDialog(QDialog):
     def _build_appearance(self) -> QGroupBox:
         box = QGroupBox("外觀")
         layout = QVBoxLayout(box)
+
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(QLabel("顯示模式"))
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItem("GIF", MODE_GIF)
+        self.mode_combo.addItem("Live2D", MODE_LIVE2D)
+        self.mode_combo.setCurrentIndex(self.mode_combo.findData(self.cfg["display_mode"]))
+        self.mode_combo.currentIndexChanged.connect(self._mode_updated)
+        mode_row.addWidget(self.mode_combo)
+        mode_row.addStretch()
+        layout.addLayout(mode_row)
+
+        character_row = QHBoxLayout()
+        character_row.addWidget(QLabel("Live2D 角色"))
+        self.character_combo = QComboBox()
+        for character_id, character in CHARACTERS.items():
+            self.character_combo.addItem(character["name"], character_id)
+        self.character_combo.setCurrentIndex(
+            self.character_combo.findData(self.cfg["live2d_character"])
+        )
+        self.character_combo.setEnabled(self.cfg["display_mode"] == MODE_LIVE2D)
+        self.character_combo.currentIndexChanged.connect(self._character_updated)
+        character_row.addWidget(self.character_combo)
+        character_row.addStretch()
+        layout.addLayout(character_row)
+
         self.gif_label = QLabel(self.cfg["gif_path"] or "（預設圖案）")
         self.gif_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(self.gif_label)
@@ -144,6 +175,17 @@ class SettingsDialog(QDialog):
         interval_row.addStretch()
         layout.addLayout(interval_row)
         return box
+
+    def _mode_updated(self, _index: int):
+        self.cfg["display_mode"] = self.mode_combo.currentData()
+        self.character_combo.setEnabled(self.cfg["display_mode"] == MODE_LIVE2D)
+        config.save(self.cfg)
+        self.displayModeChanged.emit()
+
+    def _character_updated(self, _index: int):
+        self.cfg["live2d_character"] = self.character_combo.currentData()
+        config.save(self.cfg)
+        self.live2dCharacterChanged.emit()
 
     def _pick_gif(self):
         path, _ = QFileDialog.getOpenFileName(self, "選擇 GIF", "", "GIF (*.gif)")

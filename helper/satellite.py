@@ -21,7 +21,8 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import QFileIconProvider, QMessageBox, QWidget
 
 SAT_D = 48
-ORBIT_R = 90
+ORBIT_R = 90  # circle 模式（GIF）：以中心點環繞一整圈
+ARC_R = 120  # arc 模式（Live2D）：以角色上緣為錨點，向上展開半圓弧（像彩虹）
 ANIM_MS = 200
 
 
@@ -120,6 +121,7 @@ class SatelliteRing(QObject):
         self._links = []
         self._sats = []
         self._expanded = False
+        self._mode = "circle"
         self._group = None
         self._provider = QFileIconProvider()
 
@@ -131,30 +133,37 @@ class SatelliteRing(QObject):
         self._links = links
         self.collapse(animated=False)
 
-    def toggle(self, center: QPoint) -> None:
+    def toggle(self, anchor: QPoint, mode: str = "circle") -> None:
         if self._expanded:
             self.collapse()
         else:
-            self.expand(center)
+            self.expand(anchor, mode)
 
     # ── 展開/收合（FR-8、FR-12、6.3 節動畫）─────────────────────────────
 
-    def _target_pos(self, center: QPoint, i: int, n: int) -> QPoint:
-        angle = math.radians(-90 + i * 360 / n)
-        return center + QPoint(
-            round(ORBIT_R * math.cos(angle)), round(ORBIT_R * math.sin(angle))
+    def _target_pos(self, anchor: QPoint, i: int, n: int, mode: str) -> QPoint:
+        """circle：以 anchor 為中心環繞一整圈；arc：以 anchor 為錨點向上展開半圓弧（像彩虹）。"""
+        if mode == "arc":
+            angle = math.radians(180 + i * 180 / (n - 1)) if n > 1 else math.radians(270)
+            radius = ARC_R
+        else:
+            angle = math.radians(-90 + i * 360 / n)
+            radius = ORBIT_R
+        return anchor + QPoint(
+            round(radius * math.cos(angle)), round(radius * math.sin(angle))
         ) - QPoint(SAT_D // 2, SAT_D // 2)
 
-    def expand(self, center: QPoint) -> None:
+    def expand(self, anchor: QPoint, mode: str = "circle") -> None:
         if self._expanded:
             return
         self._build_satellites()
         self._expanded = True
+        self._mode = mode
         n = len(self._sats)
-        start = center - QPoint(SAT_D // 2, SAT_D // 2)
+        start = anchor - QPoint(SAT_D // 2, SAT_D // 2)
         self._group = QParallelAnimationGroup(self)
         for i, sat in enumerate(self._sats):
-            target = self._target_pos(center, i, n)
+            target = self._target_pos(anchor, i, n, mode)
             sat.move(start)
             sat.setWindowOpacity(0.0)
             sat.show()
@@ -170,8 +179,8 @@ class SatelliteRing(QObject):
                 self._group.addAnimation(anim)
         self._group.start()
 
-    def reposition(self, center: QPoint) -> None:
-        """主圓圈拖曳時讓衛星跟隨（略過動畫，直接就定位）。"""
+    def reposition(self, anchor: QPoint) -> None:
+        """主圓圈拖曳時讓衛星跟隨（略過動畫，直接就定位；沿用展開時的排列模式）。"""
         if not self._expanded:
             return
         if self._group:
@@ -180,7 +189,7 @@ class SatelliteRing(QObject):
         n = len(self._sats)
         for i, sat in enumerate(self._sats):
             sat.setWindowOpacity(1.0)
-            sat.move(self._target_pos(center, i, n))
+            sat.move(self._target_pos(anchor, i, n, self._mode))
 
     def collapse(self, animated: bool = True) -> None:
         if not self._expanded:

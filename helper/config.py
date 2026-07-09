@@ -1,14 +1,18 @@
-"""設定檔讀寫（%APPDATA%\\desktop-helper\\config.json）"""
+"""設定檔讀寫（%APPDATA%\\desktop-helper-live2d\\config.json）"""
 
 import copy
 import json
 import os
 
-CONFIG_DIR = os.path.join(os.environ["APPDATA"], "desktop-helper")
+from helper.live2d_characters import DEFAULT_CHARACTER
+
+CONFIG_DIR = os.path.join(os.environ["APPDATA"], "desktop-helper-live2d")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 MAX_LINKS = 8
 
 DEFAULTS = {
+    "display_mode": "gif",  # "gif" 或 "live2d"
+    "live2d_character": DEFAULT_CHARACTER,  # helper.live2d_characters.CHARACTERS 的 key
     "gif_path": "",
     "gif_interval": 60,
     "position": {"x": 100, "y": 100},
