@@ -81,6 +81,24 @@ class Live2DRenderer:
     def set_scale(self, scale: float) -> None:
         self.model.SetScale(scale)
 
+    def look_at(self, x: float, y: float) -> None:
+        """讓角色頭部/眼睛注視座標 (x, y)，範圍 -1..1（左下為 -1,-1，右上為 1,1）。
+
+        model.Drag() 只會把座標存進底層 dragManager，這個 wrapper 的 Update() 並未
+        像官方 C++ sample 一樣把它套用到 ParamAngleX/ParamEyeBallX 等參數，所以要在
+        Update() 之後、Draw() 之前自己疊加這幾個標準參數（數值比例沿用官方 sample）。
+        """
+        self._look_x, self._look_y = x, y
+
+    def _apply_look_at(self) -> None:
+        x, y = getattr(self, "_look_x", 0.0), getattr(self, "_look_y", 0.0)
+        self.model.AddParameterValue("ParamAngleX", x * 30)
+        self.model.AddParameterValue("ParamAngleY", y * 30)
+        self.model.AddParameterValue("ParamAngleZ", x * y * 10)
+        self.model.AddParameterValue("ParamBodyAngleX", x * 10)
+        self.model.AddParameterValue("ParamEyeBallX", x)
+        self.model.AddParameterValue("ParamEyeBallY", y)
+
     def _start_motion(self, group: str, index: int, priority_name: str, on_finish=None) -> None:
         # 素材動作皆 Loop=True 永不 finish，優先權判斷（見 Cubism 官方 SDK 行為）永遠不會自然
         # 釋放，導致同優先權（含 FORCE）後續動作全被判定「priority too low」；先清空再換動作。
@@ -170,6 +188,7 @@ class Live2DRenderer:
         live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
         self.model.Update()
         self._keep_loop_motion_alive()
+        self._apply_look_at()
         self.model.Draw()
         raw = glReadPixels(0, 0, self.width, self.height, GL_RGBA, GL_UNSIGNED_BYTE)
         buf = raw if isinstance(raw, (bytes, bytearray)) else ctypes.string_at(raw, self.width * self.height * 4)

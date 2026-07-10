@@ -6,7 +6,7 @@ import os
 import random
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QMovie, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import QColor, QCursor, QMovie, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QToolTip, QWidget
 
 from helper.live2d_characters import CHARACTERS, DEFAULT_CHARACTER
@@ -134,7 +134,14 @@ class Bubble(QWidget):
             self.setFixedSize(self._live2d_layout["w"], self._live2d_layout["h"])
         self.update()
 
+    LOOK_RADIUS = 480  # 視覺感應半徑（螢幕像素）：用視窗自身尺寸正規化會太小，滑鼠稍微不在角色身上就會被夾到角落
+
     def _tick_live2d(self) -> None:
+        center = self.mapToGlobal(self.rect().center())
+        cursor = QCursor.pos()
+        nx = max(-1.0, min(1.0, (cursor.x() - center.x()) / self.LOOK_RADIUS))
+        ny = max(-1.0, min(1.0, (center.y() - cursor.y()) / self.LOOK_RADIUS))
+        self._live2d.look_at(nx, ny)
         self._live2d_pixmap = QPixmap.fromImage(self._live2d.render_frame())
         self.update()
 
