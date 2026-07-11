@@ -188,6 +188,10 @@ class SettingsDialog(QDialog):
         form.addRow("用量光環寬度半徑（px）", self.ring_rx_spin)
         self.ring_ry_spin = spin("ring_ry", 5, 150)
         form.addRow("用量光環高度半徑（px）", self.ring_ry_spin)
+        self.tool_label_x_spin = spin("tool_label_x", -400, 400)
+        form.addRow("工具名稱標籤水平偏移（px，相對視窗左上角）", self.tool_label_x_spin)
+        self.tool_label_y_spin = spin("tool_label_y", -400, 400)
+        form.addRow("工具名稱標籤垂直偏移（px，相對視窗左上角）", self.tool_label_y_spin)
 
         reset = QPushButton("還原預設")
         reset.clicked.connect(self._reset_live2d_layout)
@@ -204,6 +208,8 @@ class SettingsDialog(QDialog):
         layout["ring_center_y_margin"] = self.ring_margin_spin.value()
         layout["ring_rx"] = self.ring_rx_spin.value()
         layout["ring_ry"] = self.ring_ry_spin.value()
+        layout["tool_label_x"] = self.tool_label_x_spin.value()
+        layout["tool_label_y"] = self.tool_label_y_spin.value()
         config.save(self.cfg)
         self.live2dLayoutChanged.emit()
 
@@ -218,6 +224,8 @@ class SettingsDialog(QDialog):
         self.ring_margin_spin.setValue(layout["ring_center_y_margin"])
         self.ring_rx_spin.setValue(layout["ring_rx"])
         self.ring_ry_spin.setValue(layout["ring_ry"])
+        self.tool_label_x_spin.setValue(layout["tool_label_x"])
+        self.tool_label_y_spin.setValue(layout["tool_label_y"])
         config.save(self.cfg)
         self.live2dLayoutChanged.emit()
 

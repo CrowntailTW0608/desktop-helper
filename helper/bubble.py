@@ -41,6 +41,8 @@ DEFAULT_LIVE2D_LAYOUT = {
     "ring_center_y_margin": LIVE2D_RING_CENTER_Y_MARGIN,
     "ring_rx": LIVE2D_RING_RX,
     "ring_ry": LIVE2D_RING_RY,
+    "tool_label_x": 0,
+    "tool_label_y": -20,
 }
 
 SEV_COLOR = {"normal": "#44cc66", "warning": "#f0a030", "critical": "#ff4444"}
@@ -145,10 +147,12 @@ class Bubble(QWidget):
         self._live2d_pixmap = QPixmap.fromImage(self._live2d.render_frame())
         self.update()
 
-    def live2d_react(self, event: str) -> None:
-        """對應 trigger 事件；僅在 Live2D 模式且模型已載入時生效，行為由角色設定驅動。"""
+    def live2d_react(self, event: str, tool_name: str = "") -> None:
+        """對應 trigger 事件；僅在 Live2D 模式且模型已載入時生效，行為由角色設定驅動。
+        若角色設定表有 "{event}:{tool_name}" 這個更精確的 key（例如同一 PreToolUse
+        但依 tool_name 區分反應），會優先用它，否則退回只用 event 的一般反應。"""
         if self._live2d is not None:
-            self._live2d.react(event)
+            self._live2d.react(event, tool_name)
 
     # ── GIF（FR-2a：檔案單張、資料夾輪播）────────────────────────────────
 

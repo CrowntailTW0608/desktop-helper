@@ -44,6 +44,7 @@ class Live2DRenderer:
         self._idle_pos = 0
         self._motion_gen = 0
         self._loop_motion = None  # (group, index, priority)：目前需要手動維持循環播放的動作
+        self._sticky_gen = None  # sticky 動作等待下個事件期間，用來讓 _repeat_sticky_motion 知道是否已被取代
 
         fmt = QSurfaceFormat()
         fmt.setAlphaBufferSize(8)
@@ -125,6 +126,7 @@ class Live2DRenderer:
         底層優先權分級已無意義，故統一用 FORCE 避免這個方向性限制。
         """
         self._loop_motion = None
+        self._sticky_gen = None
         idle_list = self._character["idle"]
         if not idle_list:
             return
@@ -137,8 +139,11 @@ class Live2DRenderer:
 
     # ── Trigger 事件反應：由角色設定的 reactions 表驅動 ────────────────────
 
-    def react(self, event: str) -> None:
-        action = self._character["reactions"].get(event)
+    def react(self, event: str, tool_name: str = "") -> None:
+        reactions = self._character["reactions"]
+        action = reactions.get(f"{event}:{tool_name}") if tool_name else None
+        if action is None:
+            action = reactions.get(event)
         if action is None:
             return
         if action.get("reset"):
@@ -155,14 +160,37 @@ class Live2DRenderer:
             group, index = motion.get("group", ""), motion["index"]
             priority = motion.get("priority", "FORCE")
             hold = motion.get("hold")
-            self._loop_motion = None if hold else (group, index, priority)
+            sticky = motion.get("sticky", False)  # True：等下一個 react() 事件才離開，不會自己回 idle
+            repeat = motion.get("repeat")  # sticky 專用：每隔幾秒重播一次，通常填該動作 Meta.Duration
+            self._loop_motion = None if (hold or sticky) else (group, index, priority)
+            self._sticky_gen = gen if sticky else None
             self._start_motion(
                 group, index, priority,
-                on_finish=lambda *_: QTimer.singleShot(0, self.start_idle),
+                on_finish=None if sticky else lambda *_: QTimer.singleShot(0, lambda: self._on_motion_naturally_finished(gen)),
             )
             if hold:
                 # 素材動作多為 Loop=True，永遠不會觸發 onFinish，需靠計時器強制回 idle。
                 QTimer.singleShot(int(hold * 1000), lambda: self._on_hold_expired(gen))
+            if sticky and repeat:
+                QTimer.singleShot(
+                    int(repeat * 1000),
+                    lambda: self._repeat_sticky_motion(gen, group, index, priority, repeat),
+                )
+
+    def _repeat_sticky_motion(self, gen: int, group: str, index: int, priority: str, repeat: float) -> None:
+        """sticky 動作等待期間持續重播，直到下個事件（PostToolUse 等）呼叫 start_idle()/
+        另一個 react() 蓋過 self._sticky_gen 為止。"""
+        if gen != self._sticky_gen:
+            return
+        self._start_motion(group, index, priority, on_finish=None)
+        QTimer.singleShot(int(repeat * 1000), lambda: self._repeat_sticky_motion(gen, group, index, priority, repeat))
+
+    def _on_motion_naturally_finished(self, gen: int) -> None:
+        """有些素材雖標 Loop=True，播完一輪仍會觸發一次 onFinish；若這個動作被設計為
+        持續播放到下個事件蓋過（self._loop_motion 已設定），就不能在這裡搶先切回 idle，
+        否則會跟 _keep_loop_motion_alive() 的重播互相打架，導致動作提早結束。"""
+        if gen == self._motion_gen and self._loop_motion is None:
+            self.start_idle()
 
     def _on_hold_expired(self, gen: int) -> None:
         if gen == self._motion_gen:

@@ -17,6 +17,7 @@ from helper.trigger import (
     SpeechBubble,
     ThinkingEffect,
     Toast,
+    ToolNameLabel,
     ToolUseEffect,
     TriggerWatcher,
 )
@@ -66,6 +67,7 @@ class HelperApp:
         self._notification_effect = None
         self._thinking_effect = None
         self._precompact_effect = None
+        self._tool_name_label = None
         self._apply_trigger_cfg()
 
         self._build_tray()
@@ -110,6 +112,8 @@ class HelperApp:
             self._notification_effect.move(self._notification_effect.pos() + delta)
         if self._thinking_effect and self._thinking_effect.isVisible():
             self._thinking_effect.shift(delta)
+        if self._tool_name_label and self._tool_name_label.isVisible():
+            self._tool_name_label.shift(delta)
 
     def _on_app_state(self, state):
         if state != Qt.ApplicationActive:
@@ -197,9 +201,16 @@ class HelperApp:
     def _on_speech_bubble_closed(self):
         self._speech_bubble = None
 
-    def _on_pretooluse_trigger(self, _data: dict):
+    def _on_pretooluse_trigger(self, data: dict):
         if self._live2d_mode():
-            self.bubble.live2d_react("PreToolUse")
+            self.bubble.live2d_react("PreToolUse", data.get("tool_name", ""))
+            if self._tool_name_label is None:
+                self._tool_name_label = ToolNameLabel()
+            layout = self.cfg["live2d_layout"]
+            pos = self.bubble.geometry().topLeft() + QPoint(layout["tool_label_x"], layout["tool_label_y"])
+            self._tool_name_label.show_text(data.get("tool_name", ""), pos)
+            self.bubble.raise_()
+            self._tool_name_label.raise_()
             return
         if self._tooluse_effect is None:
             self._tooluse_effect = ToolUseEffect()
@@ -211,6 +222,8 @@ class HelperApp:
     def _on_posttooluse_trigger(self, _data: dict):
         if self._live2d_mode():
             self.bubble.live2d_react("PostToolUse")
+            if self._tool_name_label is not None:
+                self._tool_name_label.hide()
             return
         if self._tooluse_effect is not None:
             self._tooluse_effect.close_gif()

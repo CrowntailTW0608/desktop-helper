@@ -54,12 +54,16 @@ class TriggerWatcher(QObject):
     def _poll(self) -> None:
         if not os.path.isdir(self._dir):
             return
-        for name in sorted(os.listdir(self._dir)):
-            if not name.endswith(".json"):
-                continue
-            path = os.path.join(self._dir, name)
-            if os.path.isfile(path):
-                self._process(path)
+        paths = [
+            os.path.join(self._dir, name)
+            for name in os.listdir(self._dir)
+            if name.endswith(".json")
+        ]
+        paths = [p for p in paths if os.path.isfile(p)]
+        # 檔名時間戳只到秒，PreToolUse/PostToolUse 若落在同一秒會被字串排序打亂順序
+        # （"PostToolUse" 字母序排在 "PreToolUse" 前面），改用實際修改時間排序才是真正的寫入順序。
+        for path in sorted(paths, key=os.path.getmtime):
+            self._process(path)
 
     def _process(self, path: str) -> None:
         try:
@@ -236,6 +240,39 @@ class SpeechBubble(QWidget):
     def mouseReleaseEvent(self, e) -> None:
         if e.button() == Qt.LeftButton:
             self.close()
+
+    def shift(self, delta: QPoint) -> None:
+        self.move(self.pos() + delta)
+
+
+class ToolNameLabel(QWidget):
+    """Live2D 模式的 PreToolUse 通知：純文字（無底色、無外框），PostToolUse 時隱藏。"""
+
+    def __init__(self):
+        super().__init__(
+            None,
+            Qt.FramelessWindowHint
+            | Qt.Tool
+            | Qt.WindowStaysOnTopHint
+            | Qt.WindowDoesNotAcceptFocus,
+        )
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self._text = ""
+
+    def show_text(self, text: str, pos: QPoint) -> None:
+        self._text = text
+        fm = QFontMetrics(self.font())
+        self.setFixedSize(fm.horizontalAdvance(text) + 16, fm.height() + 8)
+        self.move(pos)
+        self.show()
+        self.update()
+
+    def paintEvent(self, _event) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(QColor("#44b8d4"))
+        p.drawText(self.rect(), Qt.AlignCenter, self._text)
 
     def shift(self, delta: QPoint) -> None:
         self.move(self.pos() + delta)
