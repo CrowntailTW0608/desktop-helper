@@ -2,7 +2,6 @@
 
 import json
 import os
-import shutil
 
 from PySide6.QtCore import (
     QEasingCurve,
@@ -66,8 +65,22 @@ class TriggerWatcher(QObject):
             self._process(path)
 
     def _process(self, path: str) -> None:
+        processed_dir = os.path.join(self._dir, "processed")
         try:
-            with open(path, encoding="utf-8") as f:
+            os.makedirs(processed_dir, exist_ok=True)
+        except OSError:
+            return
+        claimed_path = os.path.join(processed_dir, os.path.basename(path))
+        try:
+            # 先搬（os.replace 是原子操作）才讀，確保同一個 trigger 檔案只會被一支行程處理到；
+            # 若背景不小心開了兩支 main.py（例如 autostart 常駐＋手動測試）同時監控同個資料夾，
+            # 搬移失敗的那一支就直接跳過，不會兩邊都各自反應同一個事件。
+            os.replace(path, claimed_path)
+        except OSError:
+            return
+
+        try:
+            with open(claimed_path, encoding="utf-8") as f:
                 data = json.load(f)
         except (OSError, json.JSONDecodeError):
             return
@@ -85,18 +98,6 @@ class TriggerWatcher(QObject):
             self.userPromptSubmitTriggered.emit(data)
         elif event == "PreCompact":
             self.preCompactTriggered.emit(data)
-
-        processed_dir = os.path.join(self._dir, "processed")
-        try:
-            os.makedirs(processed_dir, exist_ok=True)
-            shutil.move(path, os.path.join(processed_dir, os.path.basename(path)))
-        except OSError:
-            # 搬移失敗（例如寫入端還持有檔案鎖）也要確保原檔被清掉，
-            # 否則下個 2 秒 poll 會撿到同一個檔案，讓同一事件無限重複觸發。
-            try:
-                os.remove(path)
-            except OSError:
-                pass
 
 
 class Toast(QWidget):

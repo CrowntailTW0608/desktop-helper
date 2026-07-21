@@ -143,6 +143,17 @@ class HelperApp:
     def _apply_display_mode_cfg(self):
         self.bubble.set_display_mode(self.cfg["display_mode"])
         self.ring.reposition(self._satellite_anchor()[0])
+        if self._live2d_mode():
+            # 切到 Live2D 模式前若已開著 GIF 模式專用的特效，不會有人再幫它們關掉
+            # （PreToolUse/PostToolUse 在 Live2D 模式下走的是另一條分支），得在這裡清掉。
+            if self._tooluse_effect is not None:
+                self._tooluse_effect.close_gif()
+            if self._thinking_effect is not None:
+                self._thinking_effect.close()
+                self._thinking_effect = None
+            if self._notification_effect is not None:
+                self._notification_effect.close()
+                self._notification_effect = None
 
     def _apply_live2d_character_cfg(self):
         self.bubble.set_live2d_character(self.cfg["live2d_character"])
@@ -240,6 +251,9 @@ class HelperApp:
         self.bubble.raise_()
 
     def _on_notification_trigger(self, _data: dict):
+        if self._live2d_mode():
+            self.bubble.live2d_react("Notification")
+            return
         if self._notification_effect is None:
             self._notification_effect = NotificationEffect()
         self._notification_effect.play(self.bubble.geometry().center())
